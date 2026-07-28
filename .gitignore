@@ -1,0 +1,8 @@
+# Save data is per-table, not part of the project
+admin/saves/*.json
+netrunner/saves/*.json
+__pycache__/
+*.pyc
+
+# Local Claude Code config
+.claude/
