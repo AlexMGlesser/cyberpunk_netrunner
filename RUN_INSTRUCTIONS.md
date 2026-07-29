@@ -74,7 +74,7 @@ A few screens add a single-key shortcut, always listed along the bottom of the s
 **1. Build an architecture.** Session menu → **NET Architectures** → **Create a new NET**. Give it a name, then add floors from the top down. Each floor has:
 
 - a **Type** — Password, File, Control Node, Black ICE (Hellhound, Killer, Asp, Raven, …), a Demon, or anything you type in
-- a **DV** the player rolls against — set this and the program resolves the check for you
+- a **DV** the player rolls against — set this and the program resolves the check for you. They don't see it until they attempt the floor (or you tell them)
 - **DEF** and **REZ** for Black ICE and Demons — what a Zap has to beat, and how much damage kills it
 - a **Label** the player sees once the floor is revealed
 - **GM notes**, which are *never* sent to the player's machine
@@ -136,6 +136,10 @@ How far they see depends on how well they roll. The floor directly beneath them 
 | 22 | 5 floors down |
 
 A roll under 6 finds nothing. The result tells them what they mapped and what the next rung would have cost, so a near miss reads as a near miss.
+
+**A scan reveals what's down there, not how hard it is.** They learn each floor's *type* — Password, Killer, File — but not its DV. That shows as `DV ?` on their map.
+
+They learn a floor's DV by **attempting** it: any action rolled against a floor teaches them what it took, pass or fail. You can also hand it over up front with **Tell them the DV** in the floor editor, or take it back later. Your own floor list marks a DV they haven't learned with a `?`.
 
 Scanning always starts from the floor they're standing on, stops at the bottom of the architecture, and needs no DV on the floors themselves — the ladder is its own difficulty.
 
@@ -227,7 +231,9 @@ Inside a run you get the architecture map, your position in it, and the NET Acti
 
 Most actions resolve the moment you send them — the GM set a DV on each floor, so a passed Backdoor opens it, a passed Pathfinder reveals what's below, and killing ICE with Zap clears the floor. Moving down happens on its own unless something is actually blocking you. Slide and Cloak still wait on the GM, since those are contested.
 
-Taking an action walks you through: pick a target, then choose **Roll it** (the program rolls `Interface + 1d10`, exploding on a 10 and fumbling on a 1), send it without a roll, or type in a roll you made with real dice. Add a note if you want. It goes to the GM, and their ruling comes back in the feed.
+Actions apply to the floor you're standing on — there's nothing to pick. Pathfinder, Slide and Cloak have no floor target at all.
+
+Taking an action walks you through: choose **Roll it** (the program rolls `Interface + 1d10`, exploding on a 10 and fumbling on a 1), send it without a roll, or type in a roll you made with real dice. Add a note if you want. It goes to the GM, and their ruling comes back in the feed.
 
 **Jack Out** leaves cleanly. Esc does the same thing.
 

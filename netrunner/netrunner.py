@@ -498,7 +498,7 @@ class UI:
 # --------------------------------------------------------------------------
 
 FALLBACK_ACTIONS = [
-    {"name": "Pathfinder", "cost": "1 NET Action",
+    {"name": "Pathfinder", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs a rising DV, one rung per floor",
      "dv": "easy for the floor just below you, harder for each floor under that",
      "success": "You map as many floors as your roll reaches down the ladder -- "
@@ -509,7 +509,7 @@ FALLBACK_ACTIONS = [
              "well you roll: the floor at your feet is easy to read, and every "
              "floor deeper is harder. This is how you avoid walking blind into "
              "Black ICE."},
-    {"name": "Backdoor", "cost": "1 NET Action",
+    {"name": "Backdoor", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",
      "success": "The Password floor is defeated and you can move past it.",
@@ -517,21 +517,21 @@ FALLBACK_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1,
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "none",
      "check": "Interface + 1d10 vs the attacker's roll",
      "dv": "the attacking Black ICE's roll, not a fixed number",
      "success": "The attack misses you entirely.",
      "failure": "The attack lands and its effect applies in full.",
      "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
              "fixed-DV, which is why the GM resolves it rather than the program."},
-    {"name": "Cloak", "cost": "1 NET Action",
+    {"name": "Cloak", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs the Demon's PER",
      "dv": "the Demon's PER, or a rival Netrunner's roll",
      "success": "You go unnoticed for now.",
      "failure": "You are spotted and whatever is hunting you knows where to look.",
      "desc": "Mask your presence from a Demon or an enemy Netrunner. Contested, "
              "so the GM resolves it."},
-    {"name": "Control", "cost": "1 NET Action",
+    {"name": "Control", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Control Node DV",
      "dv": "DV of the Control Node",
      "success": "The node is yours. You can operate the hardware wired to it -- "
@@ -539,21 +539,21 @@ FALLBACK_ACTIONS = [
      "failure": "The node rejects you and stays under its own control.",
      "desc": "Seize a Control Node. This is the action that turns a NET run into "
              "a physical advantage for the rest of the crew."},
-    {"name": "Eye-Dee", "cost": "1 NET Action",
+    {"name": "Eye-Dee", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "You learn what the File actually holds before touching it.",
      "failure": "The contents stay unreadable.",
      "desc": "Identify a File. Worth doing before you copy or infect something "
              "you cannot describe."},
-    {"name": "Virus", "cost": "1 NET Action",
+    {"name": "Virus", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Floor DV",
      "dv": "DV of the File or Control Node",
      "success": "The virus installs and does whatever you and the GM agreed it does.",
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
-    {"name": "Download", "cost": "1 NET Action",
+    {"name": "Download", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "A copy lands in your deck. It stays readable for the rest of "
@@ -561,7 +561,7 @@ FALLBACK_ACTIONS = [
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
-    {"name": "Zap", "cost": "1 NET Action",
+    {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
      "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
@@ -1189,7 +1189,12 @@ class Client:
             state_col = {"Intact": C.RESET, "Defeated": C.GREEN, "Alerted": C.RED,
                          "Controlled": C.CYAN, "Destroyed": C.GREY,
                          "Rezzed": C.ORANGE}.get(state, C.RESET)
-            dv = "DV %s" % f["dv"] if f.get("dv") else "DV --"
+            if f.get("dv_known") and f.get("dv"):
+                dv = "DV %s" % f["dv"]
+            elif f.get("dv_known"):
+                dv = "DV --"
+            else:
+                dv = "DV ?"
             label = ("  " + C.GREY + f["label"] + C.RESET) if f.get("label") else ""
             lines.append(" %s %s %s %s  %s%s" % (
                 marker,
@@ -1309,32 +1314,22 @@ class Client:
             lines.append("")
             return lines
 
-        targets = [("This floor (%d)" % cur, ("Floor %d" % cur, cur))]
-        for f in net.get("floors", []):
-            if f["n"] == cur:
-                continue
-            name = f["type"] if f.get("revealed") else "unscanned"
-            targets.append(("Floor %d -- %s" % (f["n"], name),
-                            ("Floor %d (%s)" % (f["n"], name), f["n"])))
-        targets += [
-            ("The architecture itself", (net["name"], None)),
-            ("Something else (type it)", ("__custom__", None)),
-        ]
-        picked = self.ui.menu(act_head(), targets)
-        if picked is None:
-            return
-        target, target_floor = picked
-        if target == "__custom__":
-            target = self.ui.prompt(act_head(), "Target:", "")
-            if target is None:
-                return
-            target_floor = None
+        # Actions that work on a floor always work on the one you are standing
+        # on, so there is nothing to ask. Pathfinder, Slide and Cloak have no
+        # floor target at all.
+        here = next((f for f in net.get("floors", []) if f["n"] == cur), None)
+        if action.get("targets", "floor") == "none":
+            target, target_floor = net["name"], None
+        else:
+            target_floor = cur
+            what = here["type"] if here and here.get("revealed") else "unknown"
+            target = "Floor %d (%s)" % (cur, what)
 
         roll_text = None
         roll_total = None
         wants_roll = "1d10" in (action.get("check") or "")
         if wants_roll:
-            mode = self.ui.menu(act_head() + [" " + C.GREY + "target: " + C.RESET + target, ""], [
+            mode = self.ui.menu(act_head() + [" " + C.GREY + "on: " + C.RESET + target, ""], [
                 (C.GREEN + "Roll it" + C.RESET + C.GREY + "  Interface %d + 1d10" % interface + C.RESET, "roll"),
                 ("Send without a roll (GM rolls)", "none"),
                 ("Enter a roll I made at the table", "manual"),
@@ -1360,7 +1355,7 @@ class Client:
                 except ValueError:
                     roll_total = None
 
-        note = self.ui.prompt(act_head() + [" " + C.GREY + "target: " + C.RESET + target, ""],
+        note = self.ui.prompt(act_head() + [" " + C.GREY + "on: " + C.RESET + target, ""],
                               "Anything to tell the GM? (optional)", "")
         if note is None:
             note = ""

@@ -566,7 +566,7 @@ CLEARED_STATES = {"Defeated", "Controlled", "Virused", "Destroyed"}
 DIFFICULTIES = ["Basic", "Standard", "Uncommon", "Advanced"]
 
 NET_ACTIONS = [
-    {"name": "Pathfinder", "cost": "1 NET Action",
+    {"name": "Pathfinder", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs a rising DV, one rung per floor",
      "dv": "easy for the floor just below you, harder for each floor under that",
      "success": "You map as many floors as your roll reaches down the ladder -- "
@@ -577,7 +577,7 @@ NET_ACTIONS = [
              "well you roll: the floor at your feet is easy to read, and every "
              "floor deeper is harder. This is how you avoid walking blind into "
              "Black ICE."},
-    {"name": "Backdoor", "cost": "1 NET Action",
+    {"name": "Backdoor", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",
      "success": "The Password floor is defeated and you can move past it.",
@@ -585,21 +585,21 @@ NET_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1,
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "none",
      "check": "Interface + 1d10 vs the attacker's roll",
      "dv": "the attacking Black ICE's roll, not a fixed number",
      "success": "The attack misses you entirely.",
      "failure": "The attack lands and its effect applies in full.",
      "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
              "fixed-DV, which is why the GM resolves it rather than the program."},
-    {"name": "Cloak", "cost": "1 NET Action",
+    {"name": "Cloak", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs the Demon's PER",
      "dv": "the Demon's PER, or a rival Netrunner's roll",
      "success": "You go unnoticed for now.",
      "failure": "You are spotted and whatever is hunting you knows where to look.",
      "desc": "Mask your presence from a Demon or an enemy Netrunner. Contested, "
              "so the GM resolves it."},
-    {"name": "Control", "cost": "1 NET Action",
+    {"name": "Control", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Control Node DV",
      "dv": "DV of the Control Node",
      "success": "The node is yours. You can operate the hardware wired to it -- "
@@ -607,21 +607,21 @@ NET_ACTIONS = [
      "failure": "The node rejects you and stays under its own control.",
      "desc": "Seize a Control Node. This is the action that turns a NET run into "
              "a physical advantage for the rest of the crew."},
-    {"name": "Eye-Dee", "cost": "1 NET Action",
+    {"name": "Eye-Dee", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "You learn what the File actually holds before touching it.",
      "failure": "The contents stay unreadable.",
      "desc": "Identify a File. Worth doing before you copy or infect something "
              "you cannot describe."},
-    {"name": "Virus", "cost": "1 NET Action",
+    {"name": "Virus", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Floor DV",
      "dv": "DV of the File or Control Node",
      "success": "The virus installs and does whatever you and the GM agreed it does.",
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
-    {"name": "Download", "cost": "1 NET Action",
+    {"name": "Download", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "A copy lands in your deck. It stays readable for the rest of "
@@ -629,7 +629,7 @@ NET_ACTIONS = [
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
-    {"name": "Zap", "cost": "1 NET Action",
+    {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
      "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
@@ -727,6 +727,7 @@ def new_floor(number):
         "rez": 0,          # Black ICE / Demons: knock this to 0 and it dies
         "label": "",
         "content": "",     # File floors: what the netrunner walks away with
+        "dv_known": False, # has the netrunner learned how hard this floor is?
         "state": "Intact",
         "revealed": False,
         "gm_notes": "",
@@ -778,6 +779,7 @@ def reset_net(net):
             touched += 1
         f["state"] = "Intact"
         f["revealed"] = False
+        f["dv_known"] = False
     was_locked = net.get("locked", False)
     net["locked"] = False
     bits = ["%d floor(s) cleared" % touched] if touched else ["already pristine"]
@@ -1134,14 +1136,19 @@ class App:
                 shown = []
                 for i, f in enumerate(floors[: deepest + 1]):
                     if visible_floor(f):
+                        known = bool(f.get("dv_known"))
                         shown.append({
-                            "n": f["n"], "type": f["type"], "dv": f.get("dv"),
-                            "def": f.get("def") or 0, "rez": f.get("rez") or 0,
+                            "n": f["n"], "type": f["type"],
+                            "dv": f.get("dv") if known else None,
+                            "dv_known": known,
+                            "def": f.get("def") or 0 if known else 0,
+                            "rez": f.get("rez") or 0,
                             "label": f.get("label", ""), "state": f.get("state", "Intact"),
                             "revealed": True,
                         })
                     else:
                         shown.append({"n": f["n"], "type": "???", "dv": None,
+                                      "dv_known": False,
                                       "label": "", "state": "", "revealed": False})
                 nets.append({
                     "id": net["id"], "name": net["name"],
@@ -1301,6 +1308,9 @@ class App:
 
         beat = total >= against
         verdict = "SUCCESS" if beat else "FAILURE"
+        # Having actually tested a floor, they now know what it took.
+        if action != "Pathfinder" and against:
+            floor["dv_known"] = True
         detail = handler(self, net, floor, beat, total, against)
         label = "DEF" if action == "Zap" else "DV"
         text = "%s vs %s %d -- rolled %d -- %s. %s" % (
@@ -1447,6 +1457,8 @@ class App:
         for depth, f in enumerate(below):
             if total < self.pathfinder_dv(depth):
                 break
+            # A scan tells you what is down there, not how hard it will be --
+            # dv_known is deliberately left alone.
             f["revealed"] = True
             reached.append(f)
         if not reached:
@@ -1852,6 +1864,7 @@ class App:
             items = []
             for i, f in enumerate(net["floors"]):
                 eye = C.GREEN + "o" + C.RESET if f.get("revealed") else C.GREY + "." + C.RESET
+                dv_mark = "" if f.get("dv_known") else C.GREY + "?" + C.RESET
                 state = f.get("state", "Intact")
                 state_col = {"Intact": C.RESET, "Defeated": C.GREEN, "Alerted": C.RED,
                              "Controlled": C.CYAN, "Destroyed": C.GREY, "Rezzed": C.ORANGE}.get(state, C.RESET)
@@ -1859,7 +1872,7 @@ class App:
                     "%s  %s %s  DV %s  %s%s%s  %s%s%s" % (
                         eye, pad(C.GREY + "FLOOR %d" % f["n"] + C.RESET, 16),
                         pad(C.BOLD + f["type"] + C.RESET, 22),
-                        pad(str(f.get("dv") or "--"), 4),
+                        pad(str(f.get("dv") or "--") + dv_mark, 5),
                         state_col, pad(state, 12), C.RESET,
                         C.GREY, f.get("label", ""), C.RESET),
                     ("floor", i)))
@@ -2098,6 +2111,8 @@ class App:
                 ("GM notes      %s" % (C.GREY + (f.get("gm_notes") or "(none)") + C.RESET), "notes"),
                 None,
                 (("Hide from netrunner" if f.get("revealed") else "Reveal to netrunner"), "reveal"),
+                (("Hide the DV again" if f.get("dv_known") else "Tell them the DV") + C.GREY +
+                 "   scanning never reveals it; attempting the floor does" + C.RESET, "showdv"),
                 None,
                 ("Move floor up", "up"),
                 ("Move floor down", "down"),
@@ -2154,6 +2169,9 @@ class App:
                     self.touch()
             elif choice == "reveal":
                 f["revealed"] = not f.get("revealed")
+                self.touch()
+            elif choice == "showdv":
+                f["dv_known"] = not f.get("dv_known")
                 self.touch()
             elif choice in ("up", "down"):
                 j = index - 1 if choice == "up" else index + 1
