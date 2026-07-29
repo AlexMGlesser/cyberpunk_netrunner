@@ -21,7 +21,6 @@ import random
 import re
 import shutil
 import socket
-import struct
 import sys
 import textwrap
 import threading
@@ -34,17 +33,15 @@ from datetime import datetime
 
 IS_WIN = os.name == "nt"
 
-import select          # socket multiplexing; also stdin on POSIX
-
 if IS_WIN:
     import msvcrt
 else:
+    import select
     import termios
     import tty
 
 DEFAULT_TCP_PORT = 7717
-BEACON_PORT = 7718     # GM -> players, passive beacon
-PROBE_PORT = 7719      # players -> GM, active probe answered by unicast
+BEACON_PORT = 7718
 BEACON_MAGIC = "CPRED_NETRUN_V1"
 PROTOCOL = 1
 
@@ -530,151 +527,6 @@ def roll_d10():
 # Discovery + connection
 # --------------------------------------------------------------------------
 
-# Discovery runs two ways, because different networks block different things:
-#
-#   passive -- the GM broadcasts a beacon on BEACON_PORT and players listen
-#   active  -- a player broadcasts a probe on PROBE_PORT and the GM answers
-#              with a unicast reply, which stateful firewalls let back through
-#              because it matches the player's own outbound packet
-#
-# Both go out once per local interface. A machine with Wi-Fi and Ethernet, or a
-# VPN, or Docker bridges, has several; a single unbound socket would only ever
-# reach whichever one happens to own the default route.
-
-
-def _iface_addrs():
-    """(address, broadcast) for each up IPv4 interface. Linux only; [] elsewhere."""
-    if IS_WIN:
-        return []
-    try:
-        import fcntl
-    except ImportError:
-        return []
-    try:
-        names = [name for _idx, name in socket.if_nameindex()]
-    except (OSError, AttributeError):
-        return []
-    out = []
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        for name in names:
-            packed = struct.pack("256s", name.encode()[:15])
-            try:
-                addr = socket.inet_ntoa(fcntl.ioctl(probe.fileno(), 0x8915, packed)[20:24])
-                brd = socket.inet_ntoa(fcntl.ioctl(probe.fileno(), 0x8919, packed)[20:24])
-            except OSError:
-                continue
-            if addr.startswith("127.") or brd in ("0.0.0.0", ""):
-                continue
-            out.append((addr, brd))
-    finally:
-        probe.close()
-    return out
-
-
-def local_ipv4s():
-    """Every non-loopback IPv4 address this machine answers on."""
-    found = set()
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))  # nothing is sent; this just picks a route
-            found.add(s.getsockname()[0])
-        finally:
-            s.close()
-    except OSError:
-        pass
-    try:
-        found.update(socket.gethostbyname_ex(socket.gethostname())[2])
-    except OSError:
-        pass
-    for addr, _brd in _iface_addrs():
-        found.add(addr)
-    return sorted(a for a in found if not a.startswith("127.") and a != "0.0.0.0")
-
-
-def lan_ip():
-    addrs = local_ipv4s()
-    return addrs[0] if addrs else "127.0.0.1"
-
-
-def broadcast_plan():
-    """[(source address or None, destination)] reaching every interface."""
-    plan = []
-    seen = set()
-
-    def add(src, dst):
-        if dst and (src, dst) not in seen:
-            seen.add((src, dst))
-            plan.append((src, dst))
-
-    add(None, "255.255.255.255")             # whatever owns the default route
-    per_iface = dict(_iface_addrs())
-    for addr in local_ipv4s():
-        add(addr, "255.255.255.255")         # pinned to this interface
-        brd = per_iface.get(addr)
-        if not brd:
-            parts = addr.split(".")
-            brd = ".".join(parts[:3] + ["255"]) if len(parts) == 4 else None
-        add(addr, brd)                       # subnet-directed broadcast
-        add(None, brd)
-    return plan
-
-
-class Broadcaster:
-    """Sends a datagram out of every interface, one socket per source address."""
-
-    def __init__(self):
-        self.socks = {}
-        self.plan = []
-        self.refreshed = 0.0
-
-    def refresh(self, force=False):
-        now = time.time()
-        if not force and self.plan and now - self.refreshed < 10:
-            return
-        self.refreshed = now
-        self.plan = broadcast_plan()
-        for src, _dst in self.plan:
-            if src in self.socks:
-                continue
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                if src:
-                    sock.bind((src, 0))
-                self.socks[src] = sock
-            except OSError:
-                self.socks[src] = None
-
-    def send(self, payload, port):
-        self.refresh()
-        sent = 0
-        for src, dst in self.plan:
-            sock = self.socks.get(src)
-            if sock is None:
-                continue
-            try:
-                sock.sendto(payload, (dst, port))
-                sent += 1
-            except OSError:
-                pass
-        return sent
-
-    def sockets(self):
-        return [s for s in self.socks.values() if s is not None]
-
-    def close(self):
-        for sock in self.socks.values():
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-        self.socks = {}
-        self.plan = []
-
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(HERE, "saves")
 PROFILE = os.path.join(SAVE_DIR, "profile.json")
@@ -697,15 +549,7 @@ def save_profile(prof):
 
 
 class Discovery(threading.Thread):
-    """Finds GM sessions two ways at once.
-
-    Passive: listen on BEACON_PORT for the beacon the GM broadcasts.
-    Active:  broadcast a probe on PROBE_PORT out of every interface; the GM
-             answers with a unicast reply. That reply matches our own outbound
-             packet, so stateful firewalls that drop inbound broadcasts still
-             let it through -- which is usually what stops a second machine
-             from seeing a session that works fine locally.
-    """
+    """Listens for the GM's UDP beacons and keeps a live table of sessions."""
 
     daemon = True
 
@@ -714,32 +558,9 @@ class Discovery(threading.Thread):
         self.found = {}
         self.lock = threading.Lock()
         self.running = True
-        self.error = None            # passive listener could not bind
-        self.probes_sent = 0         # interfaces reached by the last probe
-        self.started = time.time()
+        self.error = None
 
     def run(self):
-        prober = threading.Thread(target=self._probe_loop, daemon=True)
-        prober.start()
-        self._listen_loop()
-
-    def _absorb(self, data, addr):
-        try:
-            msg = json.loads(data.decode("utf-8"))
-        except Exception:
-            return
-        if msg.get("magic") != BEACON_MAGIC or msg.get("probe"):
-            return
-        # The source address is reachable by definition; the advertised one is
-        # whatever the GM's machine guessed about itself, which on a multi-homed
-        # box can easily be a VPN or Docker address we cannot route to.
-        host = addr[0]
-        alt = msg.get("ip")
-        key = (host, msg.get("port"), msg.get("id"))
-        with self.lock:
-            self.found[key] = (msg, time.time(), alt)
-
-    def _listen_loop(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
@@ -760,43 +581,23 @@ class Discovery(threading.Thread):
                 continue
             except OSError:
                 break
-            self._absorb(data, addr)
+            try:
+                msg = json.loads(data.decode("utf-8"))
+            except Exception:
+                continue
+            if msg.get("magic") != BEACON_MAGIC:
+                continue
+            host = msg.get("ip") or addr[0]
+            key = (host, msg.get("port"), msg.get("id"))
+            with self.lock:
+                self.found[key] = (msg, time.time())
         sock.close()
 
-    def _probe_loop(self):
-        caster = Broadcaster()
-        payload = json.dumps({"magic": BEACON_MAGIC, "probe": True,
-                              "protocol": PROTOCOL}).encode("utf-8")
-        last = 0.0
-        try:
-            while self.running:
-                if time.time() - last > 2.0:
-                    last = time.time()
-                    self.probes_sent = caster.send(payload, PROBE_PORT)
-                socks = caster.sockets()
-                if not socks:
-                    time.sleep(0.3)
-                    continue
-                try:
-                    ready, _, _ = select.select(socks, [], [], 0.4)
-                except (OSError, ValueError):
-                    time.sleep(0.3)
-                    continue
-                for sock in ready:
-                    try:
-                        data, addr = sock.recvfrom(2048)
-                    except OSError:
-                        continue
-                    self._absorb(data, addr)
-        finally:
-            caster.close()
-
     def sessions(self):
-        """[((host, port, id), announcement, fallback_host)] seen recently."""
-        cutoff = time.time() - 8
+        cutoff = time.time() - 6
         with self.lock:
-            live = [(k, v[0], v[2]) for k, v in self.found.items() if v[1] > cutoff]
-        live.sort(key=lambda row: row[1].get("session", ""))
+            live = [(k, v[0]) for k, v in self.found.items() if v[1] > cutoff]
+        live.sort(key=lambda kv: kv[1].get("session", ""))
         return live
 
 
@@ -959,7 +760,7 @@ class Client:
             handle = self.profile.get("handle") or C.RED + "(not set)" + C.RESET
             lines.append(" " + C.GREY + "handle: " + C.RESET + C.BOLD + handle + C.RESET)
             if self.discovery.error:
-                lines.append(" " + C.YELLOW + "cannot listen for beacons (%s) -- still probing"
+                lines.append(" " + C.YELLOW + "auto-discovery unavailable (%s) -- use manual entry"
                              % self.discovery.error + C.RESET)
             lines.append("")
             return lines
@@ -969,28 +770,16 @@ class Client:
                 continue
             sessions = self.discovery.sessions()
             items = []
-            for (host, port, _sid), msg, alt in sessions:
+            for (host, port, _sid), msg in sessions:
                 items.append((
                     "%s %s  %s%s:%s  %s  %d NET(s)  %s  %d connected%s" % (
                         C.GREEN + G["dot"] + C.RESET,
                         pad(C.BOLD + msg.get("session", "?") + C.RESET, 30),
                         C.GREY, host, port, G["dot"], msg.get("nets", 0), G["dot"],
                         msg.get("players", 0), C.RESET),
-                    ("connect", host, port, alt)))
+                    ("connect", host, port)))
             if not items:
-                waited = time.time() - self.discovery.started
-                if waited < 6:
-                    items.append((C.GREY + "(scanning the local net for open sessions...)"
-                                  + C.RESET, HEADING))
-                else:
-                    items.append((C.YELLOW + "No sessions found after %ds." % int(waited)
-                                  + C.RESET, HEADING))
-                    items.append((C.GREY + "  The GM must be inside a session, not on their main menu."
-                                  + C.RESET, HEADING))
-                    items.append((C.GREY + "  If it is open, this network is probably dropping "
-                                  "broadcasts --" + C.RESET, HEADING))
-                    items.append((C.GREY + "  use 'Enter an address manually', or run both ends with "
-                                  "--diag." + C.RESET, HEADING))
+                items.append((C.GREY + "(scanning the local net for open sessions...)" + C.RESET, HEADING))
             items.append(None)
             last = self.profile.get("last_host")
             if last:
@@ -1032,8 +821,7 @@ class Client:
                 if self.connected():
                     return "connected"
             elif kind == "connect":
-                self.try_connect(choice[1], choice[2],
-                                 alt=choice[3] if len(choice) > 3 else None)
+                self.try_connect(choice[1], choice[2])
                 if self.connected():
                     return "connected"
 
@@ -1043,35 +831,23 @@ class Client:
             self.profile["handle"] = v.strip()
             save_profile(self.profile)
 
-    def try_connect(self, host, port, alt=None):
+    def try_connect(self, host, port):
         if not self.profile.get("handle"):
             self.ask_handle(self.ui.banner("IDENTIFY YOURSELF"))
             if not self.profile.get("handle"):
                 return
-        # `alt` is the address the GM's machine advertised for itself. It can
-        # differ from where the packet actually came from on a multi-homed box,
-        # so keep it as a second thing to try rather than the first.
-        attempts = [host] + ([alt] if alt and alt != host else [])
-        errors = []
-        for candidate in attempts:
-            self.ui.draw(self.ui.banner("CONNECTING", "%s:%s" % (candidate, port)) +
-                         ["", " " + C.CYAN + "negotiating link..." + C.RESET])
-            conn = Connection(self, candidate, int(port), self.profile["handle"])
-            try:
-                conn.connect()
-            except Exception as exc:
-                errors.append("%s:%s -- %s" % (candidate, port, exc))
-                continue
-            host = candidate
-            break
-        else:
-            self.ui.alert(self.ui.banner("CONNECTION FAILED"), errors + [
+        self.ui.draw(self.ui.banner("CONNECTING", "%s:%s" % (host, port)) +
+                     ["", " " + C.CYAN + "negotiating link..." + C.RESET])
+        conn = Connection(self, host, int(port), self.profile["handle"])
+        try:
+            conn.connect()
+        except Exception as exc:
+            self.ui.alert(self.ui.banner("CONNECTION FAILED"), [
+                "Could not reach %s:%s" % (host, port),
+                str(exc),
                 "",
-                "Check that the GM is inside a session (not on their main menu),",
-                "that both machines are on the same network, and that the GM's",
-                "firewall allows incoming connections on port %s." % port,
-                "",
-                "Running both ends with --diag prints what each one can see.",
+                "Check that the GM has a session open and that both",
+                "machines are on the same network.",
             ], C.RED)
             return
         self.conn = conn
@@ -1449,80 +1225,12 @@ class Client:
 
 # --------------------------------------------------------------------------
 
-def diagnostics(seconds=10):
-    """Listen and probe for a while, then report what came back."""
-    print("NETRUNNER -- network diagnostics\n")
-    addrs = local_ipv4s()
-    print("Local IPv4 addresses:")
-    for a in addrs:
-        print("    %s" % a)
-    if not addrs:
-        print("    none found -- is this machine on a network?")
-
-    print("\nProbes will be sent to:")
-    plan = broadcast_plan()
-    for src, dst in plan:
-        print("    from %-16s -> %s:%d" % (src or "(default route)", dst, PROBE_PORT))
-
-    disc = Discovery()
-    disc.start()
-    print("\nListening on UDP %d and probing UDP %d for %d seconds..."
-          % (BEACON_PORT, PROBE_PORT, seconds))
-    deadline = time.time() + seconds
-    seen = {}
-    while time.time() < deadline:
-        for (host, port, sid), msg, alt in disc.sessions():
-            if sid not in seen:
-                seen[sid] = (host, port, msg, alt)
-                print("    found '%s' at %s:%s" % (msg.get("session", "?"), host, port))
-        time.sleep(0.3)
-    disc.running = False
-
-    if disc.error:
-        print("\n    could not listen for beacons: %s" % disc.error)
-        print("    (another copy of this program may already be running)")
-    print("\n    probes reached %d of %d route(s)" % (disc.probes_sent, len(plan)))
-
-    if seen:
-        print("\n%d session(s) found -- discovery is working." % len(seen))
-        for sid, (host, port, msg, alt) in seen.items():
-            print("    %-24s connect to %s:%s" % (msg.get("session", "?"), host, port))
-            if alt and alt != host:
-                print("    %-24s (it also advertises %s)" % ("", alt))
-        return
-
-    print("""
-Nothing found. Working through it in order:
-
-  1. Is the GM actually inside a session? Their main menu does not broadcast.
-  2. Run  python netmanager.py --diag  on the GM's machine and compare the
-     addresses it prints with the ones above. If they are not on the same
-     subnet you are on different networks -- guest and main Wi-Fi are usually
-     separate, and phone hotspots isolate clients from each other.
-  3. Let this program through the firewall. On Windows answer the Defender
-     prompt for PRIVATE networks; on Linux
-       sudo ufw allow %d/udp && sudo ufw allow %d/udp
-  4. Plenty of networks -- campus, office and guest Wi-Fi especially -- drop
-     broadcast traffic between clients on purpose. Discovery cannot work
-     there, but a direct connection still can: use 'Enter an address
-     manually' with the address the GM's --diag printed, or
-
-       python netrunner.py --host <the GM's address>
-""" % (BEACON_PORT, PROBE_PORT))
-
-
 def main():
     ap = argparse.ArgumentParser(description="Cyberpunk RED netrunner terminal")
     ap.add_argument("--host", help="connect straight to this GM address")
     ap.add_argument("--port", type=int, default=DEFAULT_TCP_PORT)
     ap.add_argument("--ascii", action="store_true", help="ASCII-only box drawing")
-    ap.add_argument("--diag", action="store_true",
-                    help="print network diagnostics and exit (no game UI)")
     args = ap.parse_args()
-
-    if args.diag:
-        diagnostics()
-        return
 
     _prepare_console()
     pick_glyphs(args.ascii)

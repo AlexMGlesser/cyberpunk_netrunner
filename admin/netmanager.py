@@ -22,7 +22,6 @@ import random
 import re
 import shutil
 import socket
-import struct
 import sys
 import threading
 import time
@@ -43,8 +42,7 @@ else:
     import tty
 
 DEFAULT_TCP_PORT = 7717
-BEACON_PORT = 7718     # GM -> players, passive beacon
-PROBE_PORT = 7719      # players -> GM, active probe answered by unicast
+BEACON_PORT = 7718
 BEACON_MAGIC = "CPRED_NETRUN_V1"
 PROTOCOL = 1
 
@@ -806,149 +804,15 @@ def unique_net_name(session, name):
 # Server
 # --------------------------------------------------------------------------
 
-# Discovery runs two ways, because different networks block different things:
-#
-#   passive -- the GM broadcasts a beacon on BEACON_PORT and players listen
-#   active  -- a player broadcasts a probe on PROBE_PORT and the GM answers
-#              with a unicast reply, which stateful firewalls let back through
-#              because it matches the player's own outbound packet
-#
-# Both go out once per local interface. A machine with Wi-Fi and Ethernet, or a
-# VPN, or Docker bridges, has several; a single unbound socket would only ever
-# reach whichever one happens to own the default route.
-
-
-def _iface_addrs():
-    """(address, broadcast) for each up IPv4 interface. Linux only; [] elsewhere."""
-    if IS_WIN:
-        return []
-    try:
-        import fcntl
-    except ImportError:
-        return []
-    try:
-        names = [name for _idx, name in socket.if_nameindex()]
-    except (OSError, AttributeError):
-        return []
-    out = []
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        for name in names:
-            packed = struct.pack("256s", name.encode()[:15])
-            try:
-                addr = socket.inet_ntoa(fcntl.ioctl(probe.fileno(), 0x8915, packed)[20:24])
-                brd = socket.inet_ntoa(fcntl.ioctl(probe.fileno(), 0x8919, packed)[20:24])
-            except OSError:
-                continue
-            if addr.startswith("127.") or brd in ("0.0.0.0", ""):
-                continue
-            out.append((addr, brd))
-    finally:
-        probe.close()
-    return out
-
-
-def local_ipv4s():
-    """Every non-loopback IPv4 address this machine answers on."""
-    found = set()
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))  # nothing is sent; this just picks a route
-            found.add(s.getsockname()[0])
-        finally:
-            s.close()
-    except OSError:
-        pass
-    try:
-        found.update(socket.gethostbyname_ex(socket.gethostname())[2])
-    except OSError:
-        pass
-    for addr, _brd in _iface_addrs():
-        found.add(addr)
-    return sorted(a for a in found if not a.startswith("127.") and a != "0.0.0.0")
-
-
 def lan_ip():
-    addrs = local_ipv4s()
-    return addrs[0] if addrs else "127.0.0.1"
-
-
-def broadcast_plan():
-    """[(source address or None, destination)] reaching every interface."""
-    plan = []
-    seen = set()
-
-    def add(src, dst):
-        if dst and (src, dst) not in seen:
-            seen.add((src, dst))
-            plan.append((src, dst))
-
-    add(None, "255.255.255.255")             # whatever owns the default route
-    per_iface = dict(_iface_addrs())
-    for addr in local_ipv4s():
-        add(addr, "255.255.255.255")         # pinned to this interface
-        brd = per_iface.get(addr)
-        if not brd:
-            parts = addr.split(".")
-            brd = ".".join(parts[:3] + ["255"]) if len(parts) == 4 else None
-        add(addr, brd)                       # subnet-directed broadcast
-        add(None, brd)
-    return plan
-
-
-class Broadcaster:
-    """Sends a datagram out of every interface, one socket per source address."""
-
-    def __init__(self):
-        self.socks = {}
-        self.plan = []
-        self.refreshed = 0.0
-
-    def refresh(self, force=False):
-        now = time.time()
-        if not force and self.plan and now - self.refreshed < 10:
-            return
-        self.refreshed = now
-        self.plan = broadcast_plan()
-        for src, _dst in self.plan:
-            if src in self.socks:
-                continue
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                if src:
-                    sock.bind((src, 0))
-                self.socks[src] = sock
-            except OSError:
-                self.socks[src] = None
-
-    def send(self, payload, port):
-        self.refresh()
-        sent = 0
-        for src, dst in self.plan:
-            sock = self.socks.get(src)
-            if sock is None:
-                continue
-            try:
-                sock.sendto(payload, (dst, port))
-                sent += 1
-            except OSError:
-                pass
-        return sent
-
-    def sockets(self):
-        return [s for s in self.socks.values() if s is not None]
-
-    def close(self):
-        for sock in self.socks.values():
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-        self.socks = {}
-        self.plan = []
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))  # no packets actually leave for UDP connect
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 class Client:
@@ -990,9 +854,6 @@ class Server:
         self.sock = None
         self.threads = []
         self.ip = lan_ip()
-        self.beacon_sent = 0        # interfaces reached by the last beacon
-        self.probes_answered = 0
-        self.probe_error = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -1008,7 +869,6 @@ class Server:
         self.threads = [threading.Thread(target=self._accept_loop, daemon=True)]
         if self.beacon:
             self.threads.append(threading.Thread(target=self._beacon_loop, daemon=True))
-            self.threads.append(threading.Thread(target=self._probe_loop, daemon=True))
         for t in self.threads:
             t.start()
 
@@ -1074,65 +934,42 @@ class Server:
             self.app.log("%s disconnected." % client.handle)
             self.app.bump()
 
-    def announcement(self):
-        return json.dumps({
-            "magic": BEACON_MAGIC,
-            "protocol": PROTOCOL,
-            "session": self.app.session["name"],
-            "id": self.app.session["id"],
-            "port": self.port,
-            "ip": self.ip,
-            "players": len(self.clients),
-            "nets": sum(1 for n in self.app.session["nets"] if n.get("visible")),
-        }).encode("utf-8")
-
     def _beacon_loop(self):
-        caster = Broadcaster()
-        try:
-            while self.running:
-                self.beacon_sent = caster.send(self.announcement(), BEACON_PORT)
-                for _ in range(15):  # ~1.5s, but stay responsive to stop()
-                    if not self.running:
-                        break
-                    time.sleep(0.1)
-        finally:
-            caster.close()
-
-    def _probe_loop(self):
-        """Answer 'who is out there' probes with a unicast reply."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        if hasattr(socket, "SO_REUSEPORT"):
-            try:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            except OSError:
-                pass
-        try:
-            sock.bind(("", PROBE_PORT))
-        except OSError as exc:
-            self.probe_error = str(exc)
-            sock.close()
-            return
-        sock.settimeout(0.4)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        targets = ["255.255.255.255", self._subnet_broadcast()]
         while self.running:
-            try:
-                data, addr = sock.recvfrom(2048)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            try:
-                msg = json.loads(data.decode("utf-8"))
-            except Exception:
-                continue
-            if msg.get("magic") != BEACON_MAGIC or not msg.get("probe"):
-                continue
-            self.probes_answered += 1
-            try:
-                sock.sendto(self.announcement(), addr)
-            except OSError:
-                pass
+            payload = json.dumps({
+                "magic": BEACON_MAGIC,
+                "protocol": PROTOCOL,
+                "session": self.app.session["name"],
+                "id": self.app.session["id"],
+                "port": self.port,
+                "ip": self.ip,
+                "players": len(self.clients),
+                "nets": sum(1 for n in self.app.session["nets"] if n.get("visible")),
+            }).encode("utf-8")
+            for target in targets:
+                if not target:
+                    continue
+                try:
+                    sock.sendto(payload, (target, BEACON_PORT))
+                except Exception:
+                    pass
+            for _ in range(15):  # ~1.5s, but stay responsive to stop()
+                if not self.running:
+                    break
+                time.sleep(0.1)
         sock.close()
+
+    def _subnet_broadcast(self):
+        try:
+            parts = self.ip.split(".")
+            if len(parts) == 4:
+                return ".".join(parts[:3] + ["255"])
+        except Exception:
+            pass
+        return None
 
     # -- outbound ----------------------------------------------------------
 
@@ -2190,71 +2027,12 @@ def wrap(text, width):
 
 # --------------------------------------------------------------------------
 
-def diagnostics(port):
-    """Print what this machine can see and reach. No TUI, just facts."""
-    print("NET MANAGER -- network diagnostics\n")
-    addrs = local_ipv4s()
-    print("Local IPv4 addresses:")
-    for a in addrs:
-        print("    %s" % a)
-    if not addrs:
-        print("    none found -- is this machine on a network?")
-    print("\n  Players should be told:  %s:%d" % (lan_ip(), port))
-
-    print("\nBeacons will be sent to:")
-    plan = broadcast_plan()
-    for src, dst in plan:
-        print("    from %-16s -> %s:%d" % (src or "(default route)", dst, BEACON_PORT))
-
-    print("\nPort checks:")
-    for label, kind, p in (("TCP session port", socket.SOCK_STREAM, port),
-                           ("UDP probe port", socket.SOCK_DGRAM, PROBE_PORT)):
-        s = socket.socket(socket.AF_INET, kind)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind(("0.0.0.0", p))
-            print("    %-18s %-5d OK" % (label, p))
-        except OSError as exc:
-            print("    %-18s %-5d IN USE (%s)" % (label, p, exc))
-        finally:
-            s.close()
-
-    caster = Broadcaster()
-    payload = json.dumps({"magic": BEACON_MAGIC, "diag": True}).encode("utf-8")
-    sent = caster.send(payload, BEACON_PORT)
-    caster.close()
-    print("\n    test beacon went out on %d of %d route(s)" % (sent, len(plan)))
-    if sent < len(plan):
-        print("    (some routes refused -- usually harmless if at least one worked)")
-
-    print("""
-If a player on another machine cannot see the session:
-
-  1. Make sure you are INSIDE a session. The main menu does not broadcast.
-  2. Allow this program through the firewall -- on Windows say yes to the
-     Defender prompt for PRIVATE networks; on Linux
-       sudo ufw allow %d/tcp && sudo ufw allow %d/udp && sudo ufw allow %d/udp
-  3. Confirm both machines share a subnet. If the addresses above do not look
-     like the player's address, you are on different networks (guest Wi-Fi and
-     a main Wi-Fi are usually separate, and many networks block broadcasts
-     between clients entirely).
-  4. Failing all that, the player can use 'Enter an address manually' with the
-     address printed above -- that needs only the TCP port, no broadcasts.
-""" % (port, BEACON_PORT, PROBE_PORT))
-
-
 def main():
     ap = argparse.ArgumentParser(description="Cyberpunk RED NET Manager (GM console)")
     ap.add_argument("--port", type=int, default=DEFAULT_TCP_PORT, help="TCP port to listen on")
     ap.add_argument("--ascii", action="store_true", help="ASCII-only box drawing")
     ap.add_argument("--no-beacon", action="store_true", help="disable LAN auto-discovery broadcast")
-    ap.add_argument("--diag", action="store_true",
-                    help="print network diagnostics and exit (no game UI)")
     args = ap.parse_args()
-
-    if args.diag:
-        diagnostics(args.port)
-        return
 
     _prepare_console()
     pick_glyphs(args.ascii)

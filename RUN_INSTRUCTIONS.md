@@ -156,8 +156,8 @@ To move a campaign to a different machine, copy the JSON file into that machine'
 ## Options
 
 ```
-netmanager.py [--port 7717] [--ascii] [--no-beacon] [--diag]
-netrunner.py  [--host ADDRESS] [--port 7717] [--ascii] [--diag]
+netmanager.py [--port 7717] [--ascii] [--no-beacon]
+netrunner.py  [--host ADDRESS] [--port 7717] [--ascii]
 ```
 
 | Flag | Why |
@@ -166,32 +166,18 @@ netrunner.py  [--host ADDRESS] [--port 7717] [--ascii] [--diag]
 | `--ascii` | Plain `-` and `+` instead of box-drawing characters, for terminals with bad font coverage. Auto-detected, but you can force it. |
 | `--no-beacon` | Stop announcing the session on the network. Players then need `--host` or manual entry. |
 | `--host` | Connect straight to an address, skipping the session list. |
-| `--diag` | Print network diagnostics and exit. The first thing to run when discovery misbehaves. |
 
 ---
 
 ## If something goes wrong
 
-**Player sees no sessions.** Run `--diag` on both machines — it prints every address, where discovery packets are being sent, and what came back:
-
-```bash
-python3 netmanager.py --diag     # on the GM's machine
-python3 netrunner.py --diag      # on the player's machine
-```
-
-Compare the addresses. If they don't share a subnet you're on different networks — guest and main Wi-Fi are usually separate, and phone hotspots isolate clients from each other. If they do match, it's almost always the firewall (below).
-
-Campus, office and guest networks often drop broadcast traffic between clients on purpose. Discovery can't work there, but a direct connection still can: **Enter an address manually** with the address from the GM's header, or `python3 netrunner.py --host <GM address>`. That path needs only the TCP port.
+**Player sees no sessions.** Broadcast traffic is blocked on plenty of networks — guest Wi-Fi and corporate networks especially. Use **Enter an address manually** with the address from the GM's header. If that fails too, check the firewall (below).
 
 **"Could not open port 7717."** Another copy is already running, or the port is taken. Close the other copy, or run both sides with `--port 7800`.
 
 **"Could not reach ADDRESS."** Check that the GM has a session actually open (the listening address only appears once you're inside a session, not on the main menu), that the addresses match, and the firewall.
 
-**Firewall.** The first run on Windows pops a Windows Defender prompt — allow it on **Private networks**. On macOS, System Settings → Network → Firewall → Options → allow incoming connections for Python. On Linux with ufw:
-
-```bash
-sudo ufw allow 7717/tcp && sudo ufw allow 7718/udp && sudo ufw allow 7719/udp
-```
+**Firewall.** The first run on Windows pops a Windows Defender prompt — allow it on **Private networks**. On macOS, System Settings → Network → Firewall → Options → allow incoming connections for Python. On Linux with ufw: `sudo ufw allow 7717/tcp && sudo ufw allow 7718/udp`.
 
 **Garbled boxes or `←[38;5` littering the screen.** Your terminal isn't handling ANSI. Use Windows Terminal instead of `cmd.exe`, or run with `--ascii`.
 
@@ -201,14 +187,7 @@ sudo ufw allow 7717/tcp && sudo ufw allow 7718/udp && sudo ufw allow 7719/udp
 
 ## How it works
 
-The GM console listens on **TCP 7717**. Discovery runs two ways at once, because different networks block different things:
-
-- **Passive** — the GM broadcasts a beacon on **UDP 7718** about once a second and players listen for it.
-- **Active** — the player broadcasts a probe on **UDP 7719** and the GM answers with a *unicast* reply. Because that reply matches the player's own outbound packet, stateful firewalls that drop inbound broadcasts still let it through.
-
-Both are sent once per network interface, using the interface's real broadcast address. A machine with Wi-Fi plus Ethernet, a VPN, or Docker bridges has several, and a single socket would only ever reach whichever one owns the default route.
-
-Once a session is found, the player opens a TCP connection carrying newline-delimited JSON. The address used is the one the packet actually arrived from, with the GM's self-reported address kept as a fallback to try second.
+The GM console listens on **TCP 7717** and broadcasts a small discovery packet on **UDP 7718** roughly once a second. The player's terminal listens for those broadcasts to build the session list, then opens a TCP connection carrying newline-delimited JSON.
 
 Every change on the GM side pushes a fresh state snapshot to the player, which is why their screen updates without them doing anything. That snapshot is **built per-player**: hidden architectures, unrevealed floors and GM notes are filtered out on the server and never reach the player's machine. Reading their network traffic won't spoil anything.
 
