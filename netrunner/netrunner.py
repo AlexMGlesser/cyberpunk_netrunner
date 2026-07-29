@@ -499,14 +499,16 @@ class UI:
 
 FALLBACK_ACTIONS = [
     {"name": "Pathfinder", "cost": "1 NET Action",
-     "check": "Interface + 1d10 vs Floor DV",
-     "dv": "DV of the floor being scanned",
-     "success": "The next unrevealed floor below you is identified -- you learn "
-                "what it is before you have to stand on it.",
-     "failure": "You learn nothing. The floor stays unknown.",
-     "desc": "Scan ahead into the architecture. This is how you avoid walking "
-             "blind into Black ICE; a Netrunner who never runs Pathfinder is "
-             "discovering floors the hard way."},
+     "check": "Interface + 1d10 vs a rising DV, one rung per floor",
+     "dv": "easy for the floor just below you, harder for each floor under that",
+     "success": "You map as many floors as your roll reaches down the ladder -- "
+                "clear the first rung and you see the floor beneath you, clear "
+                "the second and you see the one under that, and so on.",
+     "failure": "You cannot get a fix on anything below you.",
+     "desc": "Scan ahead into the architecture. How far you see depends on how "
+             "well you roll: the floor at your feet is easy to read, and every "
+             "floor deeper is harder. This is how you avoid walking blind into "
+             "Black ICE."},
     {"name": "Backdoor", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",

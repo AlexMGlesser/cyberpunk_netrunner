@@ -96,7 +96,7 @@ Reveal a floor and it appears on their screen instantly.
 | Action | On a success |
 | --- | --- |
 | Backdoor | floor marked **Defeated** — the way is open |
-| Pathfinder | the next unknown floor below is revealed |
+| Pathfinder | as many floors below as the roll reaches — see below |
 | Eye-Dee | the floor's contents are revealed |
 | Control | floor marked **Controlled** |
 | Virus | floor marked **Virused** |
@@ -115,11 +115,31 @@ You can still put them anywhere with **Set floor directly** in Run control — t
 
 Only three things still come to you, because a number comparison can't settle them: **Slide** and **Cloak** (contested against a roll only you know), and anything targeting a floor where you left the DV blank. Those land in **Pending NET Actions** — pick one, choose Success / Failure / Partial, type what happens, and it appears in their feed.
 
-Turn all of it off with **Auto-resolve rolls** on the session menu if you'd rather call every action yourself.
+Turn all of it off with **Rules & difficulty → Auto-resolve rolls** on the session menu if you'd rather call every action yourself.
 
 **5. Block them out.** **Run control → BLOCK THEM OUT OF THIS RUN**. Pick a preset (Black ICE flatline, Demon trace, sysop pulls the plug) or write your own. The player gets a full-screen alert and is dumped back to their game menu. You're then asked what happens to the architecture: leave it as they left it, reset it, lock it, or both.
 
 There's also **Disconnect the netrunner entirely** if you want them off the session completely.
+
+---
+
+## Pathfinder and the scanning ladder
+
+How far they see depends on how well they roll. The floor directly beneath them is easy to read, and every floor deeper is harder:
+
+| Roll at least | You map |
+| --- | --- |
+| 6 | 1 floor down |
+| 10 | 2 floors down |
+| 14 | 3 floors down |
+| 18 | 4 floors down |
+| 22 | 5 floors down |
+
+A roll under 6 finds nothing. The result tells them what they mapped and what the next rung would have cost, so a near miss reads as a near miss.
+
+Scanning always starts from the floor they're standing on, stops at the bottom of the architecture, and needs no DV on the floors themselves — the ladder is its own difficulty.
+
+**Rules & difficulty** on the session menu retunes it: change the first rung, change how much each floor deeper adds, or restore the defaults. Set the step to `0` and any successful scan maps the whole way down. The screen previews the resulting ladder against the architecture they're actually in, so you can see what a given roll would reveal.
 
 ---
 

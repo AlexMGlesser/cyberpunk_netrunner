@@ -549,6 +549,10 @@ FLOOR_TYPES = [
 FLOOR_STATES = ["Intact", "Defeated", "Alerted", "Controlled", "Virused",
                 "Destroyed", "Rezzed"]
 
+# Pathfinder scans further the better you roll. Defaults, overridable per session.
+PATHFINDER_BASE = 6     # to read the floor directly beneath you
+PATHFINDER_STEP = 4     # added for each floor deeper than that
+
 BLACK_ICE = {"Hellhound", "Sabertooth", "Kraken", "Dragon", "Killer", "Liche",
              "Asp", "Giant", "Raven", "Scorpion", "Skunk", "Wisp"}
 DEMONS = {"Imp", "Efreet", "Balron"}
@@ -563,14 +567,16 @@ DIFFICULTIES = ["Basic", "Standard", "Uncommon", "Advanced"]
 
 NET_ACTIONS = [
     {"name": "Pathfinder", "cost": "1 NET Action",
-     "check": "Interface + 1d10 vs Floor DV",
-     "dv": "DV of the floor being scanned",
-     "success": "The next unrevealed floor below you is identified -- you learn "
-                "what it is before you have to stand on it.",
-     "failure": "You learn nothing. The floor stays unknown.",
-     "desc": "Scan ahead into the architecture. This is how you avoid walking "
-             "blind into Black ICE; a Netrunner who never runs Pathfinder is "
-             "discovering floors the hard way."},
+     "check": "Interface + 1d10 vs a rising DV, one rung per floor",
+     "dv": "easy for the floor just below you, harder for each floor under that",
+     "success": "You map as many floors as your roll reaches down the ladder -- "
+                "clear the first rung and you see the floor beneath you, clear "
+                "the second and you see the one under that, and so on.",
+     "failure": "You cannot get a fix on anything below you.",
+     "desc": "Scan ahead into the architecture. How far you see depends on how "
+             "well you roll: the floor at your feet is easy to read, and every "
+             "floor deeper is harder. This is how you avoid walking blind into "
+             "Black ICE."},
     {"name": "Backdoor", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",
@@ -687,6 +693,10 @@ def new_session(name):
         "files": [],            # what the netrunner has downloaded and kept
         # The GM decides when a round ends, so this only moves when they say so.
         "turn": {"round": 1, "used": 0, "spent": {}},
+        # Pathfinder's rising ladder: the floor just below you needs `base`,
+        # each floor deeper needs `step` more on top of that.
+        "pathfinder_base": PATHFINDER_BASE,
+        "pathfinder_step": PATHFINDER_STEP,
         "nets": [],
         "run": None,          # {"net_id":..,"floor":int}
         "feed": [],           # player-visible messages
@@ -1277,7 +1287,12 @@ class App:
             return None            # they asked us to roll for them
 
         # Zap is measured against DEF, everything else against the floor DV.
-        against = floor.get("def") if action == "Zap" else floor.get("dv")
+        if action == "Zap":
+            against = floor.get("def")
+        elif action == "Pathfinder":
+            against = self.pathfinder_dv(0)     # its own ladder, not the floor DV
+        else:
+            against = floor.get("dv")
         if not against:
             if action == "Download":
                 against = 0        # no lock on it -- copying just works
@@ -1415,14 +1430,34 @@ class App:
             return "Floor %d is open." % floor["n"]
         return "The lock holds. The system may have noticed."
 
-    def _auto_pathfinder(self, net, floor, beat, total, dv):
-        if not beat:
-            return "You learn nothing new about what lies below."
-        for f in net["floors"]:
-            if not f.get("revealed"):
-                f["revealed"] = True
-                return "Floor %d resolves: %s." % (f["n"], f["type"])
-        return "Nothing left down there to find."
+    def pathfinder_ladder(self):
+        return (self.session.get("pathfinder_base", PATHFINDER_BASE),
+                self.session.get("pathfinder_step", PATHFINDER_STEP))
+
+    def pathfinder_dv(self, depth):
+        """DV to read `depth` floors below you -- depth 0 is the one at your feet."""
+        base, step = self.pathfinder_ladder()
+        return base + step * depth
+
+    def _auto_pathfinder(self, net, floor, beat, total, against):
+        below = [f for f in net["floors"] if f["n"] > floor["n"]]
+        if not below:
+            return "There is nothing below you to scan."
+        reached = []
+        for depth, f in enumerate(below):
+            if total < self.pathfinder_dv(depth):
+                break
+            f["revealed"] = True
+            reached.append(f)
+        if not reached:
+            return "You cannot get a fix on anything -- floor %d alone needed %d." % (
+                below[0]["n"], self.pathfinder_dv(0))
+        names = ", ".join("floor %d is %s" % (f["n"], f["type"]) for f in reached)
+        text = "You map %d floor(s) down: %s." % (len(reached), names)
+        if len(reached) < len(below):
+            text += " Seeing floor %d would have needed %d." % (
+                below[len(reached)]["n"], self.pathfinder_dv(len(reached)))
+        return text
 
     def _auto_eyedee(self, net, floor, beat, total, dv):
         if beat:
@@ -1655,12 +1690,10 @@ class App:
                     ("Round %d  %s  %d of %d NET Actions left" % (
                         self.turn().get("round", 1), G["dot"],
                         self.actions_left(), self.actions_per_turn()), "turn"),
-                    ("Auto-resolve rolls   %s" % (
-                        C.GREEN + "ON" + C.RESET + C.GREY +
-                        "   rolls beat the floor DV without asking you" + C.RESET
-                        if self.session.get("auto_resolve", True)
-                        else C.YELLOW + "OFF" + C.RESET + C.GREY +
-                        "  every action waits for your ruling" + C.RESET), "auto"),
+                    ("Rules & difficulty   %s%s   Pathfinder %d/+%d%s" % (
+                        C.GREEN + "auto" + C.RESET if self.session.get("auto_resolve", True)
+                        else C.YELLOW + "manual" + C.RESET, C.GREY,
+                        self.pathfinder_ladder()[0], self.pathfinder_ladder()[1], C.RESET), "rules"),
                     None,
                     ("Send a message to the netrunner", "msg"),
                     ("Netrunner character sheet", "char"),
@@ -1684,10 +1717,8 @@ class App:
                     self.screen_run_control()
                 elif choice == "turn":
                     self.screen_turn()
-                elif choice == "auto":
-                    self.session["auto_resolve"] = not self.session.get("auto_resolve", True)
-                    self.log("Auto-resolve %s." % ("ON" if self.session["auto_resolve"] else "OFF"))
-                    self.touch()
+                elif choice == "rules":
+                    self.screen_rules()
                 elif choice == "msg":
                     self.screen_message()
                 elif choice == "char":
@@ -2369,6 +2400,70 @@ class App:
         self.ui.alert(head, notes, C.GREEN)
 
     # -- misc screens ------------------------------------------------------
+
+    def screen_rules(self):
+        """How much the program decides on its own, and how hard scanning is."""
+        keep = 0
+        while True:
+            base, step = self.pathfinder_ladder()
+
+            def head():
+                b, s = self.pathfinder_ladder()
+                out = self.ui.banner("RULES & DIFFICULTY",
+                                     "how much the program settles without asking you")
+                out.append("")
+                out.append(self.ui.rule("PATHFINDER LADDER"))
+                run = self.session.get("run")
+                net = self.net_by_id(run["net_id"]) if run else None
+                here = run.get("floor", 1) if run else 1
+                depth_names = []
+                for d in range(5):
+                    floor_n = here + 1 + d
+                    what = ""
+                    if net:
+                        f = next((x for x in net["floors"] if x["n"] == floor_n), None)
+                        what = C.GREY + ("  (floor %d)" % floor_n if f else "  (past the bottom)") + C.RESET
+                    depth_names.append("   roll %s%-3d%s to see %d floor(s) down%s" % (
+                        C.YELLOW, b + s * d, C.RESET, d + 1, what))
+                out.extend(depth_names)
+                out.append("")
+                return out
+
+            items = [
+                ("Auto-resolve rolls        %s" % (
+                    C.GREEN + "ON" + C.RESET if self.session.get("auto_resolve", True)
+                    else C.YELLOW + "OFF" + C.RESET), "auto"),
+                None,
+                ("Pathfinder: first floor   DV %d" % base + C.GREY +
+                 "   the floor just beneath them" + C.RESET, "base"),
+                ("Pathfinder: each deeper   +%d" % step + C.GREY +
+                 "   added again for every floor below that" + C.RESET, "step"),
+                None,
+                ("Restore the defaults (%d, +%d)" % (PATHFINDER_BASE, PATHFINDER_STEP), "default"),
+            ]
+            choice = self.ui.menu(head, items, index=keep, watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if choice == "auto":
+                self.session["auto_resolve"] = not self.session.get("auto_resolve", True)
+                self.log("Auto-resolve %s." % ("ON" if self.session["auto_resolve"] else "OFF"))
+            elif choice == "base":
+                v = self.ui.prompt_int(head, "DV to read the floor directly beneath them:",
+                                       base, 1, 40)
+                if v is not None:
+                    self.session["pathfinder_base"] = v
+            elif choice == "step":
+                v = self.ui.prompt_int(head, "Added to the DV for each floor deeper:",
+                                       step, 0, 20)
+                if v is not None:
+                    self.session["pathfinder_step"] = v
+            elif choice == "default":
+                self.session["pathfinder_base"] = PATHFINDER_BASE
+                self.session["pathfinder_step"] = PATHFINDER_STEP
+            self.touch()
 
     def screen_turn(self):
         """Where the round lives. Nothing advances until you say so."""
