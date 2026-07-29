@@ -74,10 +74,11 @@ A few screens add a single-key shortcut, always listed along the bottom of the s
 **1. Build an architecture.** Session menu → **NET Architectures** → **Create a new NET**. Give it a name, then add floors from the top down. Each floor has:
 
 - a **Type** — Password, File, Control Node, Black ICE (Hellhound, Killer, Asp, Raven, …), a Demon, or anything you type in
-- a **DV** the player rolls against
+- a **DV** the player rolls against — set this and the program resolves the check for you
+- **DEF** and **REZ** for Black ICE and Demons — what a Zap has to beat, and how much damage kills it
 - a **Label** the player sees once the floor is revealed
 - **GM notes**, which are *never* sent to the player's machine
-- a **State** — Intact, Defeated, Alerted, Controlled, Destroyed, Rezzed
+- a **State** — Intact, Defeated, Alerted, Controlled, Virused, Destroyed, Rezzed
 
 **2. Decide what they can see.** Two independent switches:
 
@@ -88,7 +89,22 @@ Reveal a floor when a Pathfinder succeeds and it appears on their screen instant
 
 **3. Run the session.** When the player jacks in, **Run control** shows where they are. From there you can move them between floors, reveal the floor they're standing on, or change a floor's state.
 
-**4. Resolve their actions.** Every NET Action they take lands in **Pending NET Actions** with the roll they made. Pick it, choose Success / Failure / Partial, type what happens, and it appears in their feed.
+**4. Most actions resolve themselves.** You set a DV on each floor, so the program compares the player's roll to it and applies the result without asking you:
+
+| Action | On a success |
+| --- | --- |
+| Backdoor | floor marked **Defeated** — the way is open |
+| Pathfinder | the next unknown floor is revealed |
+| Eye-Dee | the floor's contents are revealed |
+| Control | floor marked **Controlled** |
+| Virus | floor marked **Virused** |
+| Zap | 1d6 off the target's REZ; at 0 it's **Destroyed** and the floor is clear |
+
+**Movement is automatic too.** Move Down just happens, unless the floor they're standing on is a Password or live ICE that hasn't been dealt with — then they're told what's blocking them. Move Up always works.
+
+Only three things still come to you, because a number comparison can't settle them: **Slide** and **Cloak** (contested against a roll only you know), and anything targeting a floor where you left the DV blank. Those land in **Pending NET Actions** — pick one, choose Success / Failure / Partial, type what happens, and it appears in their feed.
+
+Turn all of it off with **Auto-resolve rolls** on the session menu if you'd rather call every action yourself.
 
 **5. Block them out.** **Run control → BLOCK THEM OUT OF THIS RUN**. Pick a preset (Black ICE flatline, Demon trace, sysop pulls the plug) or write your own. The player gets a full-screen alert and is dumped back to their game menu. You're then asked what happens to the architecture: leave it as they left it, reset it, lock it, or both.
 
@@ -127,11 +143,28 @@ Library files are plain JSON, so you can hand-edit them or share one with anothe
 
 ---
 
+## Your character sheet
+
+The netrunner owns their own sheet — the GM never types it in. Open **My cyberdeck**, from the connect screen or the game menu, and set:
+
+- **Interface rank**, which is added to every NET Action roll, plus NET Actions per turn and max HP
+- **Programs** — name, class, ATK / DEF / REZ and what it does
+- **Skills** — your proficiencies and their levels
+- **Cyberdeck** — name, hardware slots, and what's installed
+
+Every change saves to `netrunner/saves/profile.json` the moment you make it, so the same character is waiting next session. You can build it before connecting to anything.
+
+While you're in a session, changes go straight to the GM's screen. The one thing you don't control is **current HP** — the GM tracks damage, so a sheet edit can never quietly undo a hit you took.
+
+---
+
 ## Player walkthrough
 
 The game menu lists every architecture the GM has made visible. Pick one to see what you know about it, then **JACK IN**.
 
 Inside a run you get the architecture map, your position in it, and the NET Actions from the rulebook — Pathfinder, Backdoor, Slide, Cloak, Control, Eye-Dee, Virus, Zap — plus movement and program operations. Highlight any of them and press Enter to read the full description.
+
+Most actions resolve the moment you send them — the GM set a DV on each floor, so a passed Backdoor opens it, a passed Pathfinder reveals what's below, and killing ICE with Zap clears the floor. Moving down happens on its own unless something is actually blocking you. Slide and Cloak still wait on the GM, since those are contested.
 
 Taking an action walks you through: pick a target, then choose **Roll it** (the program rolls `Interface + 1d10`, exploding on a 10 and fumbling on a 1), send it without a roll, or type in a roll you made with real dice. Add a note if you want. It goes to the GM, and their ruling comes back in the feed.
 
@@ -145,11 +178,20 @@ The GM console saves after every single change — creating a NET, revealing a f
 
 - GM sessions: `admin/saves/<session-name>-<id>.json`
 - Architecture library: `admin/library/<name>.json`
-- Player profile: `netrunner/saves/profile.json`
+- Player character sheet: `netrunner/saves/profile.json`
+- Your own rules text: `admin/rules.json`
 
 **Continue a session** on the main menu picks up exactly where you stopped: architectures, floor states, character sheet, feed and log all intact. Save files are plain JSON, so you can read or hand-edit them between sessions.
 
 To move a campaign to a different machine, copy the JSON file into that machine's `admin/saves/` folder. To move just one architecture, export it and copy that file into `admin/library/`.
+
+---
+
+## Rules text
+
+Every NET Action entry lists its cost, what you roll, what you roll against, and what success and failure each do. Highlight one and press Enter for the full breakdown.
+
+If you'd rather see your rulebook's own wording, the GM's machine has an `admin/rules.json` written on first run. Fill in the `text` field for any action and it appears under a **FROM YOUR RULEBOOK** heading — on the player's terminal as well as yours, since the GM's copy is what gets sent. You can override `cost`, `check`, `success`, `failure` or `desc` the same way. A missing or malformed file is ignored and the built-in text is used.
 
 ---
 

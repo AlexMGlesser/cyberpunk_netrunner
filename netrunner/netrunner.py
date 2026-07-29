@@ -458,6 +458,23 @@ class UI:
         finally:
             sys.stdout.write("\x1b[?25l")
 
+    def prompt_int(self, head, label, default=None, lo=None, hi=None):
+        raw = self.prompt(head, label, "" if default is None else str(default))
+        if raw is None:
+            return default
+        raw = raw.strip()
+        if not raw:
+            return default
+        try:
+            val = int(raw)
+        except ValueError:
+            return default
+        if lo is not None:
+            val = max(lo, val)
+        if hi is not None:
+            val = min(hi, val)
+        return val
+
     def alert(self, head, lines, color=C.YELLOW):
         out = list(head() if callable(head) else head)
         out.append("")
@@ -481,22 +498,68 @@ class UI:
 # --------------------------------------------------------------------------
 
 FALLBACK_ACTIONS = [
-    {"name": "Pathfinder", "cost": "1 NET Action", "check": "Interface + 1d10 vs Floor DV",
-     "desc": "Scan the floors below you. On a success the GM reveals what is waiting down there."},
-    {"name": "Backdoor", "cost": "1 NET Action", "check": "Interface + 1d10 vs Password DV",
-     "desc": "Cut through a Password floor. Blowing the roll can wake up the system."},
-    {"name": "Slide", "cost": "1 NET Action", "check": "Interface + 1d10 vs attacker's roll",
-     "desc": "Duck an incoming attack from Black ICE."},
-    {"name": "Cloak", "cost": "1 NET Action", "check": "Interface + 1d10 vs Demon PER",
-     "desc": "Hide your presence from a Demon or a rival Netrunner."},
-    {"name": "Control", "cost": "1 NET Action", "check": "Interface + 1d10 vs Control Node DV",
-     "desc": "Seize a Control Node and run whatever hardware is bolted to it."},
-    {"name": "Eye-Dee", "cost": "1 NET Action", "check": "Interface + 1d10 vs File DV",
-     "desc": "Work out what a File actually holds before you touch it."},
-    {"name": "Virus", "cost": "1 NET Action", "check": "Interface + 1d10 vs Floor DV",
-     "desc": "Plant a virus on a File or a Control Node."},
-    {"name": "Zap", "cost": "1 NET Action", "check": "Interface + 1d10 vs target DEF",
-     "desc": "Hit Black ICE or a Demon for 1d6 damage against its REZ."},
+    {"name": "Pathfinder", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs Floor DV",
+     "dv": "DV of the floor being scanned",
+     "success": "The next unrevealed floor below you is identified -- you learn "
+                "what it is before you have to stand on it.",
+     "failure": "You learn nothing. The floor stays unknown.",
+     "desc": "Scan ahead into the architecture. This is how you avoid walking "
+             "blind into Black ICE; a Netrunner who never runs Pathfinder is "
+             "discovering floors the hard way."},
+    {"name": "Backdoor", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs Password DV",
+     "dv": "DV of the Password floor",
+     "success": "The Password floor is defeated and you can move past it.",
+     "failure": "The lock holds. The system may register the attempt -- the GM "
+                "decides whether something wakes up.",
+     "desc": "Force a Password floor. Only Password floors can be Backdoored; "
+             "other floor types need their own action."},
+    {"name": "Slide", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs the attacker's roll",
+     "dv": "the attacking Black ICE's roll, not a fixed number",
+     "success": "The attack misses you entirely.",
+     "failure": "The attack lands and its effect applies in full.",
+     "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
+             "fixed-DV, which is why the GM resolves it rather than the program."},
+    {"name": "Cloak", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs the Demon's PER",
+     "dv": "the Demon's PER, or a rival Netrunner's roll",
+     "success": "You go unnoticed for now.",
+     "failure": "You are spotted and whatever is hunting you knows where to look.",
+     "desc": "Mask your presence from a Demon or an enemy Netrunner. Contested, "
+             "so the GM resolves it."},
+    {"name": "Control", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs Control Node DV",
+     "dv": "DV of the Control Node",
+     "success": "The node is yours. You can operate the hardware wired to it -- "
+                "doors, cameras, turrets, lifts, whatever it runs.",
+     "failure": "The node rejects you and stays under its own control.",
+     "desc": "Seize a Control Node. This is the action that turns a NET run into "
+             "a physical advantage for the rest of the crew."},
+    {"name": "Eye-Dee", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs File DV",
+     "dv": "DV of the File",
+     "success": "You learn what the File actually holds before touching it.",
+     "failure": "The contents stay unreadable.",
+     "desc": "Identify a File. Worth doing before you copy or infect something "
+             "you cannot describe."},
+    {"name": "Virus", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs Floor DV",
+     "dv": "DV of the File or Control Node",
+     "success": "The virus installs and does whatever you and the GM agreed it does.",
+     "failure": "The install fails and the target is untouched.",
+     "desc": "Plant a virus on a File or a Control Node. What the virus does is "
+             "set when you write it, not when you install it."},
+    {"name": "Zap", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs the target's DEF",
+     "dv": "the target's DEF",
+     "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
+                "the floor is clear.",
+     "failure": "No damage -- the target is untouched and still in your way.",
+     "desc": "Your built-in attack -- no program required. Weak next to a real "
+             "Attacker program, but it is always available. Damage means the GM "
+             "resolves the result rather than the program."},
 ]
 
 FALLBACK_OPS = [
@@ -532,12 +595,71 @@ SAVE_DIR = os.path.join(HERE, "saves")
 PROFILE = os.path.join(SAVE_DIR, "profile.json")
 
 
+# The netrunner owns their own sheet. It lives here, not in the GM's session
+# file, so it survives between games and follows you to any table. The GM only
+# tracks what happens TO you during a run -- current HP and status -- which is
+# kept separately as "condition" so the two can never overwrite each other.
+
+PROGRAM_CLASSES = [
+    "Attacker", "Defender", "Booster", "Anti-Program Attacker", "Black ICE",
+]
+
+DEFAULT_SKILLS = [
+    {"name": "Interface", "level": 4},
+    {"name": "Electronics/Security Tech", "level": 2},
+    {"name": "Cryptography", "level": 0},
+    {"name": "Library Search", "level": 0},
+    {"name": "Perception", "level": 2},
+]
+
+
+def default_character():
+    return {
+        "handle": "",
+        "role_rank": 4,
+        "interface": 4,
+        "actions_per_turn": 1,
+        "hp_max": 25,
+        "deck": {"name": "Cyberdeck", "slots": 7, "hardware": []},
+        "programs": [
+            {"name": "Sword", "cls": "Attacker", "atk": 3, "def": 0, "rez": 7,
+             "effect": "3d6 damage to a program or Black ICE."},
+            {"name": "Armor", "cls": "Defender", "atk": 0, "def": 4, "rez": 7,
+             "effect": "Reduces damage you take by 4."},
+        ],
+        "skills": [dict(s) for s in DEFAULT_SKILLS],
+        "notes": "",
+    }
+
+
+def new_program():
+    return {"name": "", "cls": "Attacker", "atk": 0, "def": 0, "rez": 7, "effect": ""}
+
+
 def load_profile():
+    prof = {"handle": "", "last_host": "", "last_port": DEFAULT_TCP_PORT}
     try:
         with open(PROFILE, encoding="utf-8") as fh:
-            return json.load(fh)
+            stored = json.load(fh)
+        if isinstance(stored, dict):
+            prof.update(stored)
     except Exception:
-        return {"handle": "", "last_host": "", "last_port": DEFAULT_TCP_PORT, "history": []}
+        pass
+    # Fill in anything a profile written by an older build is missing, so an
+    # existing file keeps working instead of blowing up on a lookup.
+    character = default_character()
+    saved = prof.get("character")
+    if isinstance(saved, dict):
+        character.update(saved)
+        deck = default_character()["deck"]
+        if isinstance(saved.get("deck"), dict):
+            deck.update(saved["deck"])
+        character["deck"] = deck
+    character.setdefault("handle", prof.get("handle", ""))
+    if not character["handle"]:
+        character["handle"] = prof.get("handle", "")
+    prof["character"] = character
+    return prof
 
 
 def save_profile(prof):
@@ -604,12 +726,13 @@ class Discovery(threading.Thread):
 class Connection(threading.Thread):
     daemon = True
 
-    def __init__(self, app, host, port, handle):
+    def __init__(self, app, host, port, handle, character=None):
         super().__init__()
         self.app = app
         self.host = host
         self.port = port
         self.handle = handle
+        self.character = character or {}
         self.sock = None
         self.alive = False
         self.error = None
@@ -620,7 +743,8 @@ class Connection(threading.Thread):
         self.sock.connect((self.host, self.port))
         self.sock.settimeout(None)
         self.alive = True
-        self.send({"type": "join", "handle": self.handle, "protocol": PROTOCOL})
+        self.send({"type": "join", "handle": self.handle, "protocol": PROTOCOL,
+                   "character": self.character})
         self.start()
 
     def send(self, obj):
@@ -787,6 +911,7 @@ class Client:
                               ("connect", last, self.profile.get("last_port", DEFAULT_TCP_PORT))))
             items += [
                 ("Enter an address manually", ("manual",)),
+                ("My cyberdeck" + C.GREY + "  stats, programs and skills" + C.RESET, ("sheet",)),
                 ("Set my handle", ("handle",)),
                 ("Netrunning reference", ("ref",)),
                 None,
@@ -806,6 +931,8 @@ class Client:
                 return "quit"
             if kind == "handle":
                 self.ask_handle(head)
+            elif kind == "sheet":
+                self.screen_character()
             elif kind == "ref":
                 self.screen_reference(head)
             elif kind == "manual":
@@ -829,7 +956,15 @@ class Client:
         v = self.ui.prompt(head, "Your netrunner handle:", self.profile.get("handle", ""))
         if v and v.strip():
             self.profile["handle"] = v.strip()
-            save_profile(self.profile)
+            self.profile["character"]["handle"] = v.strip()
+            self.save_sheet()
+
+    def save_sheet(self):
+        """Persist the sheet and, if we are in a session, tell the GM."""
+        save_profile(self.profile)
+        if self.connected():
+            self.conn.send({"type": "character", "character": self.profile["character"]})
+        self.version += 1
 
     def try_connect(self, host, port):
         if not self.profile.get("handle"):
@@ -838,7 +973,8 @@ class Client:
                 return
         self.ui.draw(self.ui.banner("CONNECTING", "%s:%s" % (host, port)) +
                      ["", " " + C.CYAN + "negotiating link..." + C.RESET])
-        conn = Connection(self, host, int(port), self.profile["handle"])
+        conn = Connection(self, host, int(port), self.profile["handle"],
+                          self.profile.get("character"))
         try:
             conn.connect()
         except Exception as exc:
@@ -878,11 +1014,7 @@ class Client:
                 s = self.snap() or {}
                 lines = self.ui.banner("SESSION: " + (s.get("session") or "?").upper(),
                                        "%s  %s  jacked in" % (self.profile.get("handle", "?"), G["dot"]))
-                ch = s.get("character") or {}
-                lines.append(" " + C.GREY + "INT " + C.RESET + str(ch.get("interface", "-")) +
-                             C.GREY + "   actions/turn " + C.RESET + str(ch.get("actions_per_turn", "-")) +
-                             C.GREY + "   HP " + C.RESET +
-                             "%s/%s" % (ch.get("hp", "-"), ch.get("hp_max", "-")))
+                lines.append(" " + self.status_strip())
                 lines.append("")
                 return lines
 
@@ -901,7 +1033,7 @@ class Client:
             items += [
                 None,
                 ("Netrunning actions & reference", ("ref",)),
-                ("My cyberdeck", ("char",)),
+                ("My cyberdeck" + C.GREY + "  stats, programs and skills" + C.RESET, ("char",)),
                 ("Say something to the GM", ("chat",)),
                 ("Full feed", ("feed",)),
                 None,
@@ -935,6 +1067,28 @@ class Client:
                     self.conn.send({"type": "chat", "text": text.strip()})
             elif kind == "feed":
                 self.screen_feed()
+
+    def status_strip(self):
+        """One line of vitals: your stats, the GM's damage tracking."""
+        ch = self.profile["character"]
+        cond = (self.snap() or {}).get("condition") or {}
+        hp = cond.get("hp")
+        if hp is None:
+            hp = ch.get("hp_max", "-")
+        hp_col = C.RESET
+        try:
+            if ch.get("hp_max"):
+                frac = float(hp) / float(ch["hp_max"])
+                hp_col = C.RED if frac <= 0.33 else C.YELLOW if frac <= 0.66 else C.GREEN
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+        out = (C.GREY + "INT " + C.RESET + str(ch.get("interface", "-")) +
+               C.GREY + "   actions/turn " + C.RESET + str(ch.get("actions_per_turn", "-")) +
+               C.GREY + "   HP " + C.RESET + hp_col +
+               "%s/%s" % (hp, ch.get("hp_max", "-")) + C.RESET)
+        if cond.get("status"):
+            out += "   " + C.RED + cond["status"] + C.RESET
+        return out
 
     def net_by_id(self, net_id):
         state = self.snap() or {}
@@ -1045,13 +1199,9 @@ class Client:
                 s = self.snap() or {}
                 r = s.get("run") or run
                 n = self.net_by_id(r["net_id"]) or net
-                ch = s.get("character") or {}
                 lines = self.ui.banner("RUN " + G["dot"] + " " + n["name"].upper(),
                                        "floor %s of the architecture" % r.get("floor", 1))
-                lines.append(" " + C.GREY + "INT " + C.RESET + str(ch.get("interface", "-")) +
-                             C.GREY + "   actions/turn " + C.RESET + str(ch.get("actions_per_turn", "-")) +
-                             C.GREY + "   HP " + C.RESET +
-                             "%s/%s" % (ch.get("hp", "-"), ch.get("hp_max", "-")))
+                lines.append(" " + self.status_strip())
                 lines.append("")
                 lines.extend(self.architecture_map(n, r.get("floor", 1)))
                 lines.append("")
@@ -1107,25 +1257,29 @@ class Client:
             lines.append("")
             return lines
 
-        targets = [("This floor (%d)" % cur, "Floor %d" % cur)]
+        targets = [("This floor (%d)" % cur, ("Floor %d" % cur, cur))]
         for f in net.get("floors", []):
             if f["n"] == cur:
                 continue
             name = f["type"] if f.get("revealed") else "unscanned"
-            targets.append(("Floor %d -- %s" % (f["n"], name), "Floor %d (%s)" % (f["n"], name)))
+            targets.append(("Floor %d -- %s" % (f["n"], name),
+                            ("Floor %d (%s)" % (f["n"], name), f["n"])))
         targets += [
-            ("The architecture itself", net["name"]),
-            ("Something else (type it)", "__custom__"),
+            ("The architecture itself", (net["name"], None)),
+            ("Something else (type it)", ("__custom__", None)),
         ]
-        target = self.ui.menu(act_head(), targets)
-        if target is None:
+        picked = self.ui.menu(act_head(), targets)
+        if picked is None:
             return
+        target, target_floor = picked
         if target == "__custom__":
             target = self.ui.prompt(act_head(), "Target:", "")
             if target is None:
                 return
+            target_floor = None
 
         roll_text = None
+        roll_total = None
         wants_roll = "1d10" in (action.get("check") or "")
         if wants_roll:
             mode = self.ui.menu(act_head() + [" " + C.GREY + "target: " + C.RESET + target, ""], [
@@ -1138,6 +1292,7 @@ class Client:
             if mode == "roll":
                 die, detail = roll_d10()
                 total = die + interface
+                roll_total = total
                 roll_text = "%d  (INT %d + d10 %s)" % (total, interface, detail)
                 self.ui.alert(act_head(), [
                     "d10 .......... %s" % detail,
@@ -1148,6 +1303,10 @@ class Client:
                 roll_text = self.ui.prompt(act_head(), "Your total:", "")
                 if roll_text is None:
                     return
+                try:
+                    roll_total = int(str(roll_text).strip())
+                except ValueError:
+                    roll_total = None
 
         note = self.ui.prompt(act_head() + [" " + C.GREY + "target: " + C.RESET + target, ""],
                               "Anything to tell the GM? (optional)", "")
@@ -1157,10 +1316,14 @@ class Client:
             "type": "action",
             "action": action["name"],
             "target": target,
+            "target_floor": target_floor,
             "roll": roll_text,
+            "total": roll_total,
             "note": note.strip(),
         })
-        self.ui.alert(act_head(), ["Sent to the GM. Watch the feed."], C.CYAN)
+        auto = (self.snap() or {}).get("auto_resolve", True)
+        self.ui.alert(act_head(), ["Sent. Watch the feed." if auto
+                                   else "Sent to the GM. Watch the feed."], C.CYAN)
 
     # -- info screens ------------------------------------------------------
 
@@ -1177,37 +1340,280 @@ class Client:
             choice = self.ui.menu(head, items, foot=C.GREY + "NET Actions available to you" + C.RESET)
             if choice is None or choice is REFRESH:
                 return
-            self.ui.alert(self.ui.banner(choice["name"].upper()),
-                          ["Cost:  " + choice.get("cost", "--"),
-                           "Check: " + choice.get("check", "--"), ""]
-                          + wrap(choice.get("desc", ""), 70), C.CYAN)
+            entry = choice
+            body = []
+            body.append("Cost   " + entry.get("cost", "--"))
+            body.append("Roll   " + entry.get("check", "--"))
+            if entry.get("dv"):
+                body.append("Vs     " + entry["dv"])
+            body.append("")
+            for line in wrap(entry.get("desc", ""), 72):
+                body.append(line)
+            if entry.get("success"):
+                body.append("")
+                body.append("ON A SUCCESS")
+                for line in wrap(entry["success"], 68):
+                    body.append("  " + line)
+            if entry.get("failure"):
+                body.append("")
+                body.append("ON A FAILURE")
+                for line in wrap(entry["failure"], 68):
+                    body.append("  " + line)
+            if entry.get("text"):          # your own wording from rules.json
+                body.append("")
+                body.append("FROM YOUR RULEBOOK")
+                for para in str(entry["text"]).split("\n"):
+                    for line in wrap(para, 68) if para.strip() else [""]:
+                        body.append("  " + line)
+            self.ui.alert(self.ui.banner(entry["name"].upper()), body, C.CYAN)
 
-    def screen_character(self, _head):
-        state = self.snap() or {}
-        ch = state.get("character") or {}
-        lines = self.ui.banner("MY CYBERDECK", ch.get("handle") or self.profile.get("handle", ""))
-        lines += [
-            "",
-            " " + C.GREY + "Interface rank ..... " + C.RESET + str(ch.get("interface", "-")),
-            " " + C.GREY + "NET Actions/turn ... " + C.RESET + str(ch.get("actions_per_turn", "-")),
-            " " + C.GREY + "HP ................. " + C.RESET + "%s / %s" % (ch.get("hp", "-"), ch.get("hp_max", "-")),
-            "",
-            self.ui.rule("PROGRAMS"),
-        ]
-        programs = ch.get("programs") or []
-        if not programs:
-            lines.append(" " + C.GREY + "(deck is empty -- ask the GM to load it)" + C.RESET)
-        for p in programs:
-            lines.append(" " + C.CYAN + G["dot"] + " " + C.RESET + p)
-        if ch.get("notes"):
-            lines.append("")
-            lines.append(self.ui.rule("NOTES"))
-            for line in wrap(ch["notes"], 76):
-                lines.append(" " + line)
-        lines += ["", self.ui.rule(), " " + C.GREY + "press any key" + C.RESET]
-        self.ui.draw(lines)
-        while read_key(0.2) is None:
-            pass
+    # -- character sheet (yours to edit, saved between games) --------------
+
+    def sheet_head(self, title="MY CYBERDECK", subtitle=None):
+        ch = self.profile["character"]
+        if subtitle is None:
+            subtitle = (ch.get("handle") or "no handle yet") + "  " + G["dot"] + \
+                       "  saved in saves/profile.json"
+        lines = self.ui.banner(title, subtitle)
+        cond = (self.snap() or {}).get("condition") or {}
+        if self.connected():
+            hp = cond.get("hp")
+            hp_txt = ("%s / %s" % (hp, ch.get("hp_max", "-"))) if hp is not None \
+                else "%s / %s" % (ch.get("hp_max", "-"), ch.get("hp_max", "-"))
+            line = " " + C.GREY + "current HP " + C.RESET + hp_txt + \
+                   C.GREY + "  (tracked by the GM)" + C.RESET
+            if cond.get("status"):
+                line += "   " + C.RED + cond["status"] + C.RESET
+            lines.append(line)
+            lines.append(" " + C.GREEN + "changes go straight to the GM" + C.RESET)
+        else:
+            lines.append(" " + C.GREY + "offline -- edits are saved and sent when you connect"
+                         + C.RESET)
+        lines.append("")
+        return lines
+
+    def screen_character(self, _head=None):
+        keep = 0
+        while True:
+            if self.drain_alerts():
+                continue
+            ch = self.profile["character"]
+            deck = ch["deck"]
+            items = [
+                ("Handle              %s" % (C.BOLD + (ch.get("handle") or "-") + C.RESET), "handle"),
+                ("Role rank           %s" % ch.get("role_rank", 4), "rank"),
+                None,
+                ("Interface rank      %s" % (C.BOLD + str(ch.get("interface", 0)) + C.RESET)
+                 + C.GREY + "   added to your NET Action rolls" + C.RESET, "interface"),
+                ("NET Actions / turn  %s" % ch.get("actions_per_turn", 1), "apt"),
+                ("Max HP              %s" % ch.get("hp_max", 0), "hp"),
+                None,
+                ("Cyberdeck           %s" % (deck.get("name") or "-") + C.GREY +
+                 "  %d slot(s), %d installed" % (deck.get("slots", 0),
+                                                 len(deck.get("hardware") or [])) + C.RESET, "deck"),
+                ("Programs            %d loaded" % len(ch.get("programs") or []), "programs"),
+                ("Skills              %d listed" % len(ch.get("skills") or []), "skills"),
+                None,
+                ("Notes               %s" % (C.GREY + (ch.get("notes") or "(none)") + C.RESET), "notes"),
+            ]
+            choice = self.ui.menu(self.sheet_head, items, index=keep,
+                                  watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if choice == "handle":
+                self.ask_handle(self.sheet_head)
+                continue
+            elif choice == "rank":
+                ch["role_rank"] = self.ui.prompt_int(self.sheet_head, "Netrunner role rank:",
+                                                     ch.get("role_rank", 4), 0, 10)
+            elif choice == "interface":
+                ch["interface"] = self.ui.prompt_int(self.sheet_head, "Interface rank:",
+                                                     ch.get("interface", 0), 0, 10)
+            elif choice == "apt":
+                ch["actions_per_turn"] = self.ui.prompt_int(
+                    self.sheet_head, "NET Actions per turn:", ch.get("actions_per_turn", 1), 1, 9)
+            elif choice == "hp":
+                ch["hp_max"] = self.ui.prompt_int(self.sheet_head, "Maximum HP:",
+                                                  ch.get("hp_max", 25), 1, 200)
+            elif choice == "notes":
+                v = self.ui.prompt(self.sheet_head, "Notes (the GM can see these):",
+                                   ch.get("notes", ""))
+                if v is None:
+                    continue
+                ch["notes"] = v
+            elif choice == "deck":
+                self.screen_deck()
+                continue
+            elif choice == "programs":
+                self.screen_programs()
+                continue
+            elif choice == "skills":
+                self.screen_skills()
+                continue
+            self.save_sheet()
+
+    def screen_deck(self):
+        keep = 0
+        while True:
+            deck = self.profile["character"]["deck"]
+            hardware = deck.setdefault("hardware", [])
+            items = [
+                ("Deck name       %s" % (deck.get("name") or "-"), ("name", None)),
+                ("Hardware slots  %s" % deck.get("slots", 0), ("slots", None)),
+                None,
+            ]
+            for i, hw in enumerate(hardware):
+                items.append((" " + C.CYAN + G["dot"] + " " + C.RESET + hw, ("edit", i)))
+            items.append((C.CYAN + "+ Install hardware" + C.RESET, ("add", None)))
+            head = lambda: self.sheet_head("CYBERDECK", "hardware bolted to the deck")
+            choice = self.ui.menu(head, items, index=keep)
+            keep = self.ui.last_index
+            if choice is None:
+                return
+            if not isinstance(choice, tuple):
+                continue
+            kind, i = choice
+            if kind == "name":
+                v = self.ui.prompt(head, "Deck name:", deck.get("name", ""))
+                if v is None:
+                    continue
+                deck["name"] = v.strip()
+            elif kind == "slots":
+                deck["slots"] = self.ui.prompt_int(head, "Hardware slots:", deck.get("slots", 7), 0, 20)
+            elif kind == "add":
+                v = self.ui.prompt(head, "Hardware (e.g. 'Backup Drive' or 'Range Upgrade'):", "")
+                if not v or not v.strip():
+                    continue
+                hardware.append(v.strip())
+            elif kind == "edit":
+                v = self.ui.prompt(head, "Edit (blank to remove):", hardware[i])
+                if v is None:
+                    continue
+                if v.strip():
+                    hardware[i] = v.strip()
+                else:
+                    hardware.pop(i)
+            self.save_sheet()
+
+    def screen_programs(self):
+        keep = 0
+        while True:
+            programs = self.profile["character"].setdefault("programs", [])
+            items = []
+            for i, p in enumerate(programs):
+                items.append((
+                    "%s %s  %s  %s  %s" % (
+                        pad(C.BOLD + (p.get("name") or "(unnamed)") + C.RESET, 20),
+                        pad(C.CYAN + (p.get("cls") or "-") + C.RESET, 24),
+                        C.YELLOW + "ATK %-2s DEF %-2s REZ %-2s" % (
+                            p.get("atk", 0), p.get("def", 0), p.get("rez", 0)) + C.RESET,
+                        C.GREY + (p.get("effect") or "")[:28] + C.RESET, ""),
+                    ("edit", i)))
+            if items:
+                items.append(None)
+            items.append((C.CYAN + "+ Load a program" + C.RESET, ("add", None)))
+            head = lambda: self.sheet_head("PROGRAMS", "what you can rez during a run")
+            choice = self.ui.menu(head, items, index=keep)
+            keep = self.ui.last_index
+            if choice is None:
+                return
+            if not isinstance(choice, tuple):
+                continue
+            kind, i = choice
+            if kind == "add":
+                programs.append(new_program())
+                self.save_sheet()
+                self.screen_program(len(programs) - 1)
+            else:
+                self.screen_program(i)
+
+    def screen_program(self, index):
+        keep = 0
+        while True:
+            programs = self.profile["character"]["programs"]
+            if index >= len(programs):
+                return
+            p = programs[index]
+            head = lambda: self.sheet_head("PROGRAM", p.get("name") or "(unnamed)")
+            items = [
+                ("Name     %s" % (p.get("name") or "-"), "name"),
+                ("Class    %s" % (p.get("cls") or "-"), "cls"),
+                ("ATK      %s" % p.get("atk", 0), "atk"),
+                ("DEF      %s" % p.get("def", 0), "def"),
+                ("REZ      %s" % p.get("rez", 0), "rez"),
+                ("Effect   %s" % (C.GREY + (p.get("effect") or "(none)") + C.RESET), "effect"),
+                None,
+                (C.RED + "Unload this program" + C.RESET, "delete"),
+            ]
+            choice = self.ui.menu(head, items, index=keep)
+            keep = self.ui.last_index
+            if choice is None:
+                return
+            if choice == "name":
+                v = self.ui.prompt(head, "Program name:", p.get("name", ""))
+                if v is None:
+                    continue
+                p["name"] = v.strip()
+            elif choice == "cls":
+                v = self.ui.menu(head, [(c, c) for c in PROGRAM_CLASSES])
+                if v:
+                    p["cls"] = v
+            elif choice in ("atk", "def", "rez"):
+                p[choice] = self.ui.prompt_int(head, choice.upper() + ":", p.get(choice, 0), 0, 30)
+            elif choice == "effect":
+                v = self.ui.prompt(head, "What it does:", p.get("effect", ""))
+                if v is None:
+                    continue
+                p["effect"] = v
+            elif choice == "delete":
+                if self.ui.confirm(head, "Unload '%s'?" % (p.get("name") or "this program")):
+                    programs.pop(index)
+                    self.save_sheet()
+                    return
+                continue
+            self.save_sheet()
+
+    def screen_skills(self):
+        keep = 0
+        while True:
+            skills = self.profile["character"].setdefault("skills", [])
+            items = []
+            for i, s in enumerate(skills):
+                level = s.get("level", 0)
+                colour = C.GREEN if level >= 4 else C.RESET if level > 0 else C.GREY
+                items.append((pad(C.BOLD + s.get("name", "?") + C.RESET, 34)
+                              + colour + "level %d" % level + C.RESET, ("edit", i)))
+            if items:
+                items.append(None)
+            items.append((C.CYAN + "+ Add a skill" + C.RESET, ("add", None)))
+            head = lambda: self.sheet_head("SKILLS", "your proficiencies")
+            choice = self.ui.menu(head, items, index=keep)
+            keep = self.ui.last_index
+            if choice is None:
+                return
+            if not isinstance(choice, tuple):
+                continue
+            kind, i = choice
+            if kind == "add":
+                name = self.ui.prompt(head, "Skill name:", "")
+                if not name or not name.strip():
+                    continue
+                level = self.ui.prompt_int(head, "Level:", 0, 0, 10)
+                skills.append({"name": name.strip(), "level": level or 0})
+            else:
+                s = skills[i]
+                name = self.ui.prompt(head, "Skill name (blank to remove):", s.get("name", ""))
+                if name is None:
+                    continue
+                if not name.strip():
+                    skills.pop(i)
+                else:
+                    s["name"] = name.strip()
+                    s["level"] = self.ui.prompt_int(head, "Level:", s.get("level", 0), 0, 10)
+            self.save_sheet()
 
     def screen_feed(self):
         state = self.snap() or {}

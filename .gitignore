@@ -9,3 +9,6 @@ __pycache__/
 
 # Exported architectures are yours to keep, but not part of the project
 admin/library/*.json
+
+# Your own rules wording is yours
+admin/rules.json

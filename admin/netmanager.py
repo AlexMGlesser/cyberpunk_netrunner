@@ -546,35 +546,84 @@ FLOOR_TYPES = [
     ("Custom", "Whatever you want it to be."),
 ]
 
-FLOOR_STATES = ["Intact", "Defeated", "Alerted", "Controlled", "Destroyed", "Rezzed"]
+FLOOR_STATES = ["Intact", "Defeated", "Alerted", "Controlled", "Virused",
+                "Destroyed", "Rezzed"]
+
+BLACK_ICE = {"Hellhound", "Sabertooth", "Kraken", "Dragon", "Killer", "Liche",
+             "Asp", "Giant", "Raven", "Scorpion", "Skunk", "Wisp"}
+DEMONS = {"Imp", "Efreet", "Balron"}
+
+# A floor you have to get through before moving deeper.
+BLOCKING_TYPES = {"Password"} | BLACK_ICE | DEMONS
+
+# A floor that is done with -- beaten, taken over, or dead.
+CLEARED_STATES = {"Defeated", "Controlled", "Virused", "Destroyed"}
 
 DIFFICULTIES = ["Basic", "Standard", "Uncommon", "Advanced"]
 
 NET_ACTIONS = [
     {"name": "Pathfinder", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Floor DV",
-     "desc": "Scan the floors below you. On a success the GM reveals what is waiting down there."},
+     "dv": "DV of the floor being scanned",
+     "success": "The next unrevealed floor below you is identified -- you learn "
+                "what it is before you have to stand on it.",
+     "failure": "You learn nothing. The floor stays unknown.",
+     "desc": "Scan ahead into the architecture. This is how you avoid walking "
+             "blind into Black ICE; a Netrunner who never runs Pathfinder is "
+             "discovering floors the hard way."},
     {"name": "Backdoor", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Password DV",
-     "desc": "Cut through a Password floor. Blowing the roll can wake up the system."},
+     "dv": "DV of the Password floor",
+     "success": "The Password floor is defeated and you can move past it.",
+     "failure": "The lock holds. The system may register the attempt -- the GM "
+                "decides whether something wakes up.",
+     "desc": "Force a Password floor. Only Password floors can be Backdoored; "
+             "other floor types need their own action."},
     {"name": "Slide", "cost": "1 NET Action",
-     "check": "Interface + 1d10 vs attacker's roll",
-     "desc": "Duck an incoming attack from Black ICE."},
+     "check": "Interface + 1d10 vs the attacker's roll",
+     "dv": "the attacking Black ICE's roll, not a fixed number",
+     "success": "The attack misses you entirely.",
+     "failure": "The attack lands and its effect applies in full.",
+     "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
+             "fixed-DV, which is why the GM resolves it rather than the program."},
     {"name": "Cloak", "cost": "1 NET Action",
-     "check": "Interface + 1d10 vs Demon PER",
-     "desc": "Hide your presence from a Demon or a rival Netrunner."},
+     "check": "Interface + 1d10 vs the Demon's PER",
+     "dv": "the Demon's PER, or a rival Netrunner's roll",
+     "success": "You go unnoticed for now.",
+     "failure": "You are spotted and whatever is hunting you knows where to look.",
+     "desc": "Mask your presence from a Demon or an enemy Netrunner. Contested, "
+             "so the GM resolves it."},
     {"name": "Control", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Control Node DV",
-     "desc": "Seize a Control Node and run whatever hardware is bolted to it."},
+     "dv": "DV of the Control Node",
+     "success": "The node is yours. You can operate the hardware wired to it -- "
+                "doors, cameras, turrets, lifts, whatever it runs.",
+     "failure": "The node rejects you and stays under its own control.",
+     "desc": "Seize a Control Node. This is the action that turns a NET run into "
+             "a physical advantage for the rest of the crew."},
     {"name": "Eye-Dee", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs File DV",
-     "desc": "Work out what a File actually holds before you touch it."},
+     "dv": "DV of the File",
+     "success": "You learn what the File actually holds before touching it.",
+     "failure": "The contents stay unreadable.",
+     "desc": "Identify a File. Worth doing before you copy or infect something "
+             "you cannot describe."},
     {"name": "Virus", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs Floor DV",
-     "desc": "Plant a virus on a File or a Control Node."},
+     "dv": "DV of the File or Control Node",
+     "success": "The virus installs and does whatever you and the GM agreed it does.",
+     "failure": "The install fails and the target is untouched.",
+     "desc": "Plant a virus on a File or a Control Node. What the virus does is "
+             "set when you write it, not when you install it."},
     {"name": "Zap", "cost": "1 NET Action",
-     "check": "Interface + 1d10 vs target DEF",
-     "desc": "Hit Black ICE or a Demon for 1d6 damage against its REZ."},
+     "check": "Interface + 1d10 vs the target's DEF",
+     "dv": "the target's DEF",
+     "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
+                "the floor is clear.",
+     "failure": "No damage -- the target is untouched and still in your way.",
+     "desc": "Your built-in attack -- no program required. Weak next to a real "
+             "Attacker program, but it is always available. Damage means the GM "
+             "resolves the result rather than the program."},
 ]
 
 OPERATIONS = [
@@ -619,15 +668,14 @@ def new_session(name):
         "name": name,
         "created": today(),
         "updated": today(),
-        "character": {
-            "handle": "",
-            "interface": 1,
-            "actions_per_turn": 1,
-            "hp": 20,
-            "hp_max": 20,
-            "programs": [],
-            "notes": "",
-        },
+        # The netrunner maintains their own sheet in their own client and sends
+        # it over on connect; this is just the copy we were last handed, kept so
+        # the session file is complete and readable on its own.
+        "character": {},
+        # What happens TO them during play is ours. Keeping it separate means a
+        # sheet update from the player can never wipe out damage we recorded.
+        "condition": {"hp": None, "status": ""},
+        "auto_resolve": True,   # settle rolls against floor DVs without asking
         "nets": [],
         "run": None,          # {"net_id":..,"floor":int}
         "feed": [],           # player-visible messages
@@ -654,6 +702,8 @@ def new_floor(number):
         "n": number,
         "type": "Password",
         "dv": 6,
+        "def": 0,          # Black ICE / Demons: what a Zap has to beat
+        "rez": 0,          # Black ICE / Demons: knock this to 0 and it dies
         "label": "",
         "state": "Intact",
         "revealed": False,
@@ -1000,6 +1050,7 @@ class App:
         self.beacon = beacon
         self.dirty = threading.Event()
         self.version = 0
+        self.actions, self.operations = load_rules()
         self.state_lock = threading.RLock()
 
     # -- helpers -----------------------------------------------------------
@@ -1052,6 +1103,7 @@ class App:
                     if f.get("revealed"):
                         shown.append({
                             "n": f["n"], "type": f["type"], "dv": f.get("dv"),
+                            "def": f.get("def") or 0, "rez": f.get("rez") or 0,
                             "label": f.get("label", ""), "state": f.get("state", "Intact"),
                             "revealed": True,
                         })
@@ -1076,25 +1128,187 @@ class App:
                 "session": s["name"],
                 "nets": nets,
                 "run": run,
-                "character": s["character"],
+                "character": s.get("character") or {},
+                "condition": s.get("condition") or {"hp": None, "status": ""},
                 "feed": s["feed"][-40:],
-                "actions": NET_ACTIONS,
-                "operations": OPERATIONS,
+                "actions": self.actions,
+                "operations": self.operations,
+                "auto_resolve": s.get("auto_resolve", True),
                 "pending": [p["id"] for p in s["pending"]],
             }
 
     # -- inbound from player ----------------------------------------------
+
+    # -- automatic resolution ----------------------------------------------
+
+    def auto_resolve(self, entry):
+        """Settle an action without bothering the GM.
+
+        Returns a description of what happened, or None when this one genuinely
+        needs a human -- no DV recorded, no roll sent, or an action whose outcome
+        is a judgement call rather than a comparison.
+        """
+        if not self.session.get("auto_resolve", True):
+            return None
+        run = self.session.get("run")
+        if not run:
+            return None
+        net = self.net_by_id(run["net_id"])
+        if not net:
+            return None
+        action = entry.get("action")
+
+        # Movement needs no roll: it just happens unless something is in the way.
+        if action in ("Move Down a Floor", "Move Up a Floor"):
+            return self._auto_move(net, run, down=action.startswith("Move Down"))
+
+        floor = None
+        want = entry.get("target_floor") or run.get("floor")
+        for f in net["floors"]:
+            if f["n"] == want:
+                floor = f
+                break
+        if floor is None:
+            return None
+
+        handler = AUTO_ACTIONS.get(action)
+        if handler is None:
+            return None            # Slide and Cloak are contested; GM's call
+        total = entry.get("total")
+        if total is None:
+            return None            # they asked us to roll for them
+
+        # Zap is measured against DEF, everything else against the floor DV.
+        against = floor.get("def") if action == "Zap" else floor.get("dv")
+        if not against:
+            return None            # nothing recorded to beat, so ask the GM
+
+        beat = total >= against
+        verdict = "SUCCESS" if beat else "FAILURE"
+        detail = handler(self, net, floor, beat, total, against)
+        label = "DEF" if action == "Zap" else "DV"
+        text = "%s vs %s %d -- rolled %d -- %s. %s" % (
+            action, label, against, total, verdict, detail)
+        self.feed(text, "gm" if beat else "alert")
+        self.log("AUTO: " + text)
+        return text
+
+    def _auto_move(self, net, run, down):
+        """Move them unless the floor they are standing on still blocks the way."""
+        floors = net["floors"]
+        here = run.get("floor", 1)
+        if not down:
+            if here <= 1:
+                text = "Move Up -- you are already at the entry point."
+                self.feed(text, "sys")
+                return text
+            run["floor"] = here - 1
+            text = "You climb back to floor %d." % run["floor"]
+            self.feed(text, "sys")
+            self.log("AUTO: netrunner moved up to floor %d." % run["floor"])
+            return text
+
+        current = next((f for f in floors if f["n"] == here), None)
+        if current and current.get("type") in BLOCKING_TYPES \
+                and current.get("state", "Intact") not in CLEARED_STATES:
+            what = current["type"] if current.get("revealed") else "something"
+            text = "You cannot move past floor %d -- %s is still active." % (here, what)
+            self.feed(text, "alert")
+            return text
+        if here >= len(floors):
+            text = "Floor %d is the bottom of this architecture." % here
+            self.feed(text, "sys")
+            return text
+        run["floor"] = here + 1
+        nxt = next((f for f in floors if f["n"] == run["floor"]), None)
+        seen = nxt.get("type") if nxt and nxt.get("revealed") else "unknown ground"
+        text = "You drop to floor %d -- %s." % (run["floor"], seen)
+        self.feed(text, "sys")
+        self.log("AUTO: netrunner moved down to floor %d." % run["floor"])
+        return text
+
+    def _auto_zap(self, net, floor, beat, total, against):
+        if not beat:
+            return "Your bolt goes wide."
+        damage = random.randint(1, 6)
+        rez = max(0, (floor.get("rez") or 0) - damage)
+        floor["rez"] = rez
+        floor["revealed"] = True
+        if rez <= 0:
+            floor["state"] = "Destroyed"
+            return "%d damage -- %s is destroyed. Floor %d is clear." % (
+                damage, floor.get("type", "it"), floor["n"])
+        floor["state"] = "Rezzed"
+        return "%d damage. %s has %d REZ left." % (damage, floor.get("type", "it"), rez)
+
+    def _auto_backdoor(self, net, floor, beat, total, dv):
+        if beat:
+            floor["state"] = "Defeated"
+            floor["revealed"] = True
+            return "Floor %d is open." % floor["n"]
+        return "The lock holds. The system may have noticed."
+
+    def _auto_pathfinder(self, net, floor, beat, total, dv):
+        if not beat:
+            return "You learn nothing new about what lies below."
+        for f in net["floors"]:
+            if not f.get("revealed"):
+                f["revealed"] = True
+                return "Floor %d resolves: %s." % (f["n"], f["type"])
+        return "Nothing left down there to find."
+
+    def _auto_eyedee(self, net, floor, beat, total, dv):
+        if beat:
+            floor["revealed"] = True
+            return "You make out what Floor %d holds%s." % (
+                floor["n"], (": " + floor["label"]) if floor.get("label") else "")
+        return "The contents stay scrambled."
+
+    def _auto_control(self, net, floor, beat, total, dv):
+        if beat:
+            floor["state"] = "Controlled"
+            floor["revealed"] = True
+            return "The node answers to you now."
+        return "The node refuses you."
+
+    def _auto_virus(self, net, floor, beat, total, dv):
+        if beat:
+            floor["state"] = "Virused"
+            floor["revealed"] = True
+            return "Your virus takes hold."
+        return "The virus fails to install."
+
+    def adopt_character(self, character, handle):
+        """Take the sheet the netrunner sent us. Their stats, our damage."""
+        if not isinstance(character, dict):
+            return False
+        character = dict(character)
+        character.setdefault("handle", handle)
+        self.session["character"] = character
+        cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+        hp_max = character.get("hp_max")
+        # Start them at full the first time, and never leave current HP above a
+        # max they have just lowered.
+        if cond.get("hp") is None and hp_max:
+            cond["hp"] = hp_max
+        elif cond.get("hp") is not None and hp_max and cond["hp"] > hp_max:
+            cond["hp"] = hp_max
+        return True
 
     def handle_client_message(self, client, msg):
         kind = msg.get("type")
         with self.state_lock:
             if kind == "join":
                 client.handle = msg.get("handle") or "netrunner"
-                if not self.session["character"].get("handle"):
-                    self.session["character"]["handle"] = client.handle
+                self.adopt_character(msg.get("character"), client.handle)
                 self.log("%s jacked into the session." % client.handle)
                 self.feed("%s connected." % client.handle, "sys")
                 self.touch()
+
+            elif kind == "character":
+                if self.adopt_character(msg.get("character"), client.handle):
+                    self.log("%s updated their sheet." % client.handle)
+                    self.touch()
 
             elif kind == "enter_run":
                 net = self.net_by_id(msg.get("net_id"))
@@ -1126,13 +1340,18 @@ class App:
                     "handle": client.handle,
                     "action": msg.get("action", "?"),
                     "target": msg.get("target", ""),
+                    "target_floor": msg.get("target_floor"),
                     "roll": msg.get("roll"),
+                    "total": msg.get("total"),
                     "note": msg.get("note", ""),
                 }
-                self.session["pending"].append(entry)
                 roll = (" [rolled %s]" % entry["roll"]) if entry["roll"] else ""
-                self.log("ACTION %s: %s -> %s%s" % (entry["handle"], entry["action"], entry["target"], roll))
-                self.feed("%s: %s%s -- waiting on the GM." % (entry["handle"], entry["action"], roll), "action")
+                self.log("ACTION %s: %s -> %s%s" % (entry["handle"], entry["action"],
+                                                    entry["target"], roll))
+                if self.auto_resolve(entry) is None:
+                    self.session["pending"].append(entry)
+                    self.feed("%s: %s%s -- waiting on the GM."
+                              % (entry["handle"], entry["action"], roll), "action")
                 self.touch()
 
             elif kind == "chat":
@@ -1256,6 +1475,13 @@ class App:
                     (pend_label, "pending"),
                     (run_label, "run"),
                     None,
+                    ("Auto-resolve rolls   %s" % (
+                        C.GREEN + "ON" + C.RESET + C.GREY +
+                        "   rolls beat the floor DV without asking you" + C.RESET
+                        if self.session.get("auto_resolve", True)
+                        else C.YELLOW + "OFF" + C.RESET + C.GREY +
+                        "  every action waits for your ruling" + C.RESET), "auto"),
+                    None,
                     ("Send a message to the netrunner", "msg"),
                     ("Netrunner character sheet", "char"),
                     ("Session log", "log"),
@@ -1275,6 +1501,10 @@ class App:
                     self.screen_pending()
                 elif choice == "run":
                     self.screen_run_control()
+                elif choice == "auto":
+                    self.session["auto_resolve"] = not self.session.get("auto_resolve", True)
+                    self.log("Auto-resolve %s." % ("ON" if self.session["auto_resolve"] else "OFF"))
+                    self.touch()
                 elif choice == "msg":
                     self.screen_message()
                 elif choice == "char":
@@ -1632,9 +1862,16 @@ class App:
             head.append(" " + (C.GREEN + "revealed to the netrunner" if f.get("revealed")
                                else C.GREY + "not yet revealed") + C.RESET)
             head.append("")
+            is_ice = f["type"] in BLACK_ICE or f["type"] in DEMONS
             items = [
                 ("Type          %s" % (C.BOLD + f["type"] + C.RESET), "type"),
                 ("DV            %s" % (f.get("dv") or "--"), "dv"),
+                ("DEF           %s%s" % (f.get("def") or "--",
+                                         C.GREY + "   what a Zap must beat" + C.RESET
+                                         if is_ice else ""), "def"),
+                ("REZ           %s%s" % (f.get("rez") or "--",
+                                         C.GREY + "   drops to 0 and it dies" + C.RESET
+                                         if is_ice else ""), "rez"),
                 ("Label         %s" % (f.get("label") or C.GREY + "(none)" + C.RESET), "label"),
                 ("State         %s" % f.get("state", "Intact"), "state"),
                 ("GM notes      %s" % (C.GREY + (f.get("gm_notes") or "(none)") + C.RESET), "notes"),
@@ -1667,6 +1904,11 @@ class App:
             elif choice == "dv":
                 v = self.ui.prompt_int(head, "Difficulty Value (blank for none):", f.get("dv"), 0, 30)
                 f["dv"] = v
+                self.touch()
+            elif choice in ("def", "rez"):
+                label = ("DEF -- a Zap has to beat this:" if choice == "def"
+                         else "REZ -- damage knocks this down, 0 kills it:")
+                f[choice] = self.ui.prompt_int(head, label, f.get(choice) or 0, 0, 99)
                 self.touch()
             elif choice == "label":
                 v = self.ui.prompt(head, "Label shown to the netrunner once revealed:", f.get("label", ""))
@@ -1925,71 +2167,118 @@ class App:
             self.log("GM message: %s" % text.strip())
             self.touch()
 
-    def screen_character(self):
-        while True:
-            ch = self.session["character"]
-            head = self.ui.banner("NETRUNNER SHEET", ch.get("handle") or "(no handle yet)")
-            head.append("")
-            items = [
-                ("Handle             %s" % (ch.get("handle") or "-"), "handle"),
-                ("Interface rank     %s" % ch.get("interface", 1), "interface"),
-                ("NET Actions/turn   %s" % ch.get("actions_per_turn", 1), "apt"),
-                ("HP                 %s / %s" % (ch.get("hp", 0), ch.get("hp_max", 0)), "hp"),
-                ("Notes              %s" % (C.GREY + (ch.get("notes") or "(none)") + C.RESET), "notes"),
-                None,
-                ("Programs (%d)" % len(ch.get("programs", [])), "programs"),
-            ]
-            choice = self.ui.menu(head, items)
-            if choice is None:
-                return
-            if choice == "handle":
-                v = self.ui.prompt(head, "Handle:", ch.get("handle", ""))
-                if v is not None:
-                    ch["handle"] = v
-            elif choice == "interface":
-                ch["interface"] = self.ui.prompt_int(head, "Interface rank:", ch.get("interface", 1), 0, 10)
-            elif choice == "apt":
-                ch["actions_per_turn"] = self.ui.prompt_int(head, "NET Actions per turn:",
-                                                            ch.get("actions_per_turn", 1), 1, 9)
-            elif choice == "hp":
-                ch["hp"] = self.ui.prompt_int(head, "Current HP:", ch.get("hp", 0), -50, 200)
-                ch["hp_max"] = self.ui.prompt_int(head, "Max HP:", ch.get("hp_max", 0), 1, 200)
-            elif choice == "notes":
-                v = self.ui.prompt(head, "Notes (netrunner can see these):", ch.get("notes", ""))
-                if v is not None:
-                    ch["notes"] = v
-            elif choice == "programs":
-                self.screen_programs()
-                continue
-            self.touch()
+    def sheet_lines(self):
+        """Read-only render of whatever sheet the netrunner last sent us."""
+        ch = self.session.get("character") or {}
+        cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+        if not ch:
+            return [" " + C.GREY + "The netrunner has not connected yet." + C.RESET,
+                    " " + C.GREY + "Their sheet arrives automatically when they do."
+                    + C.RESET, ""]
+        deck = ch.get("deck") or {}
+        hp = cond.get("hp")
+        hp = ch.get("hp_max", "-") if hp is None else hp
+        lines = [
+            " " + C.GREY + "Role rank " + C.RESET + str(ch.get("role_rank", "-")) +
+            C.GREY + "    Interface " + C.RESET + C.BOLD + str(ch.get("interface", "-")) + C.RESET +
+            C.GREY + "    NET Actions/turn " + C.RESET + str(ch.get("actions_per_turn", "-")) +
+            C.GREY + "    HP " + C.RESET + "%s/%s" % (hp, ch.get("hp_max", "-")),
+        ]
+        if cond.get("status"):
+            lines.append(" " + C.RED + "status: " + cond["status"] + C.RESET)
+        if deck:
+            lines.append(" " + C.GREY + "deck: " + C.RESET + (deck.get("name") or "-") +
+                         C.GREY + "  %d slot(s)" % deck.get("slots", 0) + C.RESET +
+                         (C.GREY + "  [" + ", ".join(deck.get("hardware") or []) + "]" + C.RESET
+                          if deck.get("hardware") else ""))
+        programs = ch.get("programs") or []
+        lines.append("")
+        lines.append(self.ui.rule("PROGRAMS"))
+        if not programs:
+            lines.append(" " + C.GREY + "(none loaded)" + C.RESET)
+        for p in programs:
+            if isinstance(p, dict):
+                lines.append(" " + C.CYAN + G["dot"] + " " + C.RESET +
+                             pad(C.BOLD + (p.get("name") or "?") + C.RESET, 18) +
+                             pad(C.GREY + (p.get("cls") or "") + C.RESET, 26) +
+                             C.YELLOW + "ATK %-3s DEF %-3s REZ %-3s" % (
+                                 p.get("atk", 0), p.get("def", 0), p.get("rez", 0)) + C.RESET +
+                             "  " + C.GREY + (p.get("effect") or "") + C.RESET)
+            else:  # a sheet written by an older build
+                lines.append(" " + C.CYAN + G["dot"] + " " + C.RESET + str(p))
+        skills = ch.get("skills") or []
+        if skills:
+            lines.append("")
+            lines.append(self.ui.rule("SKILLS"))
+            row = []
+            for s in skills:
+                row.append("%s %s" % (s.get("name", "?"), s.get("level", 0)))
+            lines.append(" " + C.GREY + (" " + G["dot"] + " ").join(row) + C.RESET)
+        if ch.get("notes"):
+            lines.append("")
+            lines.append(self.ui.rule("THEIR NOTES"))
+            for line in wrap(ch["notes"], 76):
+                lines.append(" " + C.GREY + line + C.RESET)
+        return lines
 
-    def screen_programs(self):
-        ch = self.session["character"]
-        ch.setdefault("programs", [])
+    def screen_character(self):
+        """The netrunner owns their sheet; we only track what we do to them."""
+        keep = 0
         while True:
-            head = self.ui.banner("PROGRAMS IN THE DECK")
-            items = [(p, ("edit", i)) for i, p in enumerate(ch["programs"])]
-            if items:
-                items.append(None)
-            items.append((C.CYAN + "+ Add a program" + C.RESET, ("add", None)))
-            choice = self.ui.menu(head, items)
+            ch = self.session.get("character") or {}
+            cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+
+            def head():
+                out = self.ui.banner("NETRUNNER SHEET",
+                                     (ch.get("handle") or "nobody connected yet") + "  " +
+                                     G["dot"] + "  maintained by the player")
+                out += self.sheet_lines()
+                out.append("")
+                out.append(self.ui.rule("YOURS TO SET"))
+                return out
+
+            hp_max = ch.get("hp_max") or 0
+            items = [
+                ("Current HP         %s / %s" % (
+                    cond.get("hp") if cond.get("hp") is not None else "-", hp_max or "-"), "hp"),
+                ("Status             %s" % (cond.get("status") or C.GREY + "(none)" + C.RESET), "status"),
+                None,
+                ("Apply damage", "damage"),
+                ("Heal", "heal"),
+                ("Restore to full", "full"),
+            ]
+            choice = self.ui.menu(head, items, index=keep, watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
             if choice is None:
                 return
-            kind, i = choice
-            if kind == "add":
-                v = self.ui.prompt(head, "Program (e.g. 'Sword  Attacker  ATK 3  DMG 3d6'):", "")
-                if v and v.strip():
-                    ch["programs"].append(v.strip())
-                    self.touch()
-            else:
-                v = self.ui.prompt(head, "Edit (blank to delete):", ch["programs"][i])
+            if choice == "hp":
+                cond["hp"] = self.ui.prompt_int(head, "Current HP:", cond.get("hp") or hp_max,
+                                                -50, max(1, hp_max) if hp_max else 200)
+            elif choice == "status":
+                v = self.ui.prompt(head, "Status (e.g. 'Cyberpsychosis', blank to clear):",
+                                   cond.get("status", ""))
                 if v is None:
                     continue
-                if v.strip():
-                    ch["programs"][i] = v.strip()
-                else:
-                    ch["programs"].pop(i)
-                self.touch()
+                cond["status"] = v.strip()
+                if cond["status"]:
+                    self.feed("Status: %s" % cond["status"], "alert")
+            elif choice in ("damage", "heal"):
+                amount = self.ui.prompt_int(head, "How much?", 0, 0, 200) or 0
+                if not amount:
+                    continue
+                current = cond.get("hp") if cond.get("hp") is not None else hp_max
+                cond["hp"] = current - amount if choice == "damage" else min(hp_max or 999,
+                                                                            current + amount)
+                self.feed("You take %d damage. HP %s/%s." % (amount, cond["hp"], hp_max)
+                          if choice == "damage" else
+                          "You patch up %d. HP %s/%s." % (amount, cond["hp"], hp_max),
+                          "alert" if choice == "damage" else "sys")
+            elif choice == "full":
+                cond["hp"] = hp_max or None
+                self.feed("You are back to full HP.", "sys")
+            self.touch()
 
     def screen_log(self):
         head = self.ui.banner("SESSION LOG", "newest last")
@@ -2005,24 +2294,116 @@ class App:
 
     def screen_reference(self, head):
         while True:
-            items = [(pad(C.BOLD + a["name"] + C.RESET, 16) + C.GREY + a["desc"] + C.RESET, a)
-                     for a in NET_ACTIONS]
+            items = [(pad(C.BOLD + a["name"] + C.RESET, 16) +
+                      C.GREY + a["desc"][:56] + C.RESET, a) for a in self.actions]
             items.append(None)
-            items += [(pad(C.BOLD + o["name"] + C.RESET, 22) + C.GREY + o["desc"] + C.RESET, o)
-                      for o in OPERATIONS]
+            items += [(pad(C.BOLD + o["name"] + C.RESET, 22) +
+                       C.GREY + o["desc"][:52] + C.RESET, o) for o in self.operations]
             choice = self.ui.menu(list(head) + [self.ui.rule("NET ACTIONS")], items)
             if choice is None:
                 return
-            self.ui.alert(self.ui.banner(choice["name"].upper()), [
-                "Cost:  " + choice["cost"],
-                "Check: " + choice["check"],
-                "",
-            ] + wrap(choice["desc"], 70), C.CYAN)
+            entry = choice
+            body = []
+            body.append("Cost   " + entry.get("cost", "--"))
+            body.append("Roll   " + entry.get("check", "--"))
+            if entry.get("dv"):
+                body.append("Vs     " + entry["dv"])
+            body.append("")
+            for line in wrap(entry.get("desc", ""), 72):
+                body.append(line)
+            if entry.get("success"):
+                body.append("")
+                body.append("ON A SUCCESS")
+                for line in wrap(entry["success"], 68):
+                    body.append("  " + line)
+            if entry.get("failure"):
+                body.append("")
+                body.append("ON A FAILURE")
+                for line in wrap(entry["failure"], 68):
+                    body.append("  " + line)
+            if entry.get("text"):          # your own wording from rules.json
+                body.append("")
+                body.append("FROM YOUR RULEBOOK")
+                for para in str(entry["text"]).split("\n"):
+                    for line in wrap(para, 68) if para.strip() else [""]:
+                        body.append("  " + line)
+            self.ui.alert(self.ui.banner(entry["name"].upper()), body, C.CYAN)
 
 
 def wrap(text, width):
     import textwrap
     return textwrap.wrap(text, width) or [""]
+
+
+RULES_FILE = os.path.join(HERE, "rules.json")
+
+RULES_TEMPLATE = """{
+  "_comment": [
+    "Paste your own rulebook wording here and it shows up in the reference",
+    "screens on BOTH the GM console and the player terminal -- you only need",
+    "to fill this in on the GM's machine.",
+    "",
+    "Key = the action name exactly as it appears in the reference list.",
+    "'text' is shown under a FROM YOUR RULEBOOK heading. You can also override",
+    "any other field: cost, check, dv, success, failure, desc.",
+    "",
+    "Delete the entries you do not want to fill in."
+  ],
+  "Pathfinder": { "text": "" },
+  "Backdoor":   { "text": "" },
+  "Slide":      { "text": "" },
+  "Cloak":      { "text": "" },
+  "Control":    { "text": "" },
+  "Eye-Dee":    { "text": "" },
+  "Virus":      { "text": "" },
+  "Zap":        { "text": "" }
+}
+"""
+
+
+def load_rules():
+    """Merge admin/rules.json over the built-in reference, if it exists.
+
+    Lets you keep your own wording next to the mechanics without touching the
+    script. Missing or malformed files are ignored -- the built-ins still work.
+    """
+    actions = [dict(a) for a in NET_ACTIONS]
+    operations = [dict(o) for o in OPERATIONS]
+    try:
+        with open(RULES_FILE, encoding="utf-8") as fh:
+            custom = json.load(fh)
+    except (OSError, ValueError):
+        return actions, operations
+    if not isinstance(custom, dict):
+        return actions, operations
+    for entry in actions + operations:
+        override = custom.get(entry["name"])
+        if isinstance(override, dict):
+            entry.update({k: v for k, v in override.items() if v not in ("", None)})
+    return actions, operations
+
+
+def write_rules_template():
+    """Drop a template next to the script the first time, so the format is obvious."""
+    if os.path.exists(RULES_FILE):
+        return
+    try:
+        with open(RULES_FILE, "w", encoding="utf-8") as fh:
+            fh.write(RULES_TEMPLATE)
+    except OSError:
+        pass
+
+
+# Which NET Actions the program can settle on its own. Slide and Cloak are
+# contested against a roll only the GM knows, so they are deliberately absent.
+AUTO_ACTIONS = {
+    "Backdoor": App._auto_backdoor,
+    "Pathfinder": App._auto_pathfinder,
+    "Eye-Dee": App._auto_eyedee,
+    "Control": App._auto_control,
+    "Virus": App._auto_virus,
+    "Zap": App._auto_zap,
+}
 
 
 # --------------------------------------------------------------------------
@@ -2037,6 +2418,7 @@ def main():
     _prepare_console()
     pick_glyphs(args.ascii)
     os.makedirs(SAVE_DIR, exist_ok=True)
+    write_rules_template()
 
     app = App(args.port, not args.no_beacon)
     sys.stdout.write("\x1b[2J")
