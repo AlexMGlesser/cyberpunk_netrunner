@@ -101,8 +101,17 @@ Reveal a floor and it appears on their screen instantly.
 | Control | floor marked **Controlled** |
 | Virus | floor marked **Virused** |
 | Zap | 1d6 off the target's REZ; at 0 it's **Destroyed** and the floor is clear |
+| Download | a copy of the File lands on their deck for the rest of the session |
 
-**Movement is automatic too.** Move Down just happens, unless the floor they're standing on is a Password or live ICE that hasn't been dealt with — then they're told what's blocking them. Move Up always works.
+**Movement is automatic too**, and always **one floor at a time**. Move Down just happens, unless something is actually in the way:
+
+- an **intact Password** — they're told to Backdoor it
+- **live Black ICE or a Demon** — they're told to kill it or get past it
+- the **bottom of the architecture** — there's nothing below
+
+A floor counts as dealt with once it's Defeated, Controlled, Virused or Destroyed. Files, Control Nodes and empty floors never block on their own. Move Up always works, and stops at the entry.
+
+You can still put them anywhere with **Set floor directly** in Run control — that's a GM override and ignores the blocking rules.
 
 Only three things still come to you, because a number comparison can't settle them: **Slide** and **Cloak** (contested against a roll only you know), and anything targeting a floor where you left the DV blank. Those land in **Pending NET Actions** — pick one, choose Success / Failure / Partial, type what happens, and it appears in their feed.
 
@@ -111,6 +120,18 @@ Turn all of it off with **Auto-resolve rolls** on the session menu if you'd rath
 **5. Block them out.** **Run control → BLOCK THEM OUT OF THIS RUN**. Pick a preset (Black ICE flatline, Demon trace, sysop pulls the plug) or write your own. The player gets a full-screen alert and is dumped back to their game menu. You're then asked what happens to the architecture: leave it as they left it, reset it, lock it, or both.
 
 There's also **Disconnect the netrunner entirely** if you want them off the session completely.
+
+---
+
+## Files
+
+A **File** floor can carry actual content the netrunner walks away with.
+
+Set **File contents** in the floor editor. That text is *not* sent with the architecture — the player can see a File is there, and Eye-Dee tells them what it is, but the contents only arrive when they run **Download** on it. That's checked against the floor's DV like anything else; leave the DV blank and the copy just works.
+
+Downloaded files land on their deck and stay there for the whole session. **Saved files** on the player's game menu — and inside a run, so they can read something without jacking out — lists everything they've taken and opens it for reading. Jacking out doesn't lose them, and resetting the architecture doesn't confiscate them.
+
+On your side, **Downloaded files** on the session menu shows everything they hold. From there you can read any of it, press `d` to wipe one off their deck, or **Hand them a file directly** — which drops a file straight onto their deck with no run involved, useful for a fixer's dead drop or an email their crew forwarded.
 
 ---
 
@@ -165,6 +186,8 @@ While you're in a session, changes go straight to the GM's screen. The one thing
 The game menu lists every architecture the GM has made visible. Pick one to see what you know about it, then **JACK IN**.
 
 Inside a run you get the architecture map, your position in it, and the NET Actions from the rulebook — Pathfinder, Backdoor, Slide, Cloak, Control, Eye-Dee, Virus, Zap — plus movement and program operations. Highlight any of them and press Enter to read the full description.
+
+**Saved files** holds everything you've pulled out of the NET this session, readable from the game menu or from inside a run. Files come from running **Download** on a File floor, or from the GM handing you one.
 
 Most actions resolve the moment you send them — the GM set a DV on each floor, so a passed Backdoor opens it, a passed Pathfinder reveals what's below, and killing ICE with Zap clears the floor. Moving down happens on its own unless something is actually blocking you. Slide and Cloak still wait on the GM, since those are contested.
 

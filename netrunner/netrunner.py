@@ -551,6 +551,14 @@ FALLBACK_ACTIONS = [
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
+    {"name": "Download", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs File DV",
+     "dv": "DV of the File",
+     "success": "A copy lands in your deck. It stays readable for the rest of "
+                "the session, whether or not you are still in the architecture.",
+     "failure": "The copy is corrupted and you get nothing.",
+     "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
+             "what something is; this is what actually takes it with you."},
     {"name": "Zap", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
@@ -1033,6 +1041,8 @@ class Client:
             items += [
                 None,
                 ("Netrunning actions & reference", ("ref",)),
+                ("Saved files (%d)" % len((self.snap() or {}).get("files") or []) +
+                 C.GREY + "  everything you have pulled out" + C.RESET, ("files",)),
                 ("My cyberdeck" + C.GREY + "  stats, programs and skills" + C.RESET, ("char",)),
                 ("Say something to the GM", ("chat",)),
                 ("Full feed", ("feed",)),
@@ -1061,6 +1071,8 @@ class Client:
                 self.screen_reference(head)
             elif kind == "char":
                 self.screen_character(head)
+            elif kind == "files":
+                self.screen_files()
             elif kind == "chat":
                 text = self.ui.prompt(head, "Say to the GM:", "")
                 if text and text.strip():
@@ -1219,6 +1231,7 @@ class Client:
                               C.GREY + o["desc"] + C.RESET, ("act", o)))
             items += [
                 None,
+                ("Saved files (%d)" % len((self.snap() or {}).get("files") or []), ("files",)),
                 ("Say something to the GM", ("chat",)),
                 (C.YELLOW + "JACK OUT" + C.RESET + C.GREY + "  leave the architecture" + C.RESET, ("out",)),
             ]
@@ -1237,6 +1250,8 @@ class Client:
                 if self.ui.confirm(head, "Jack out of %s?" % net["name"]):
                     self.conn.send({"type": "leave_run"})
                     return
+            elif kind == "files":
+                self.screen_files()
             elif kind == "chat":
                 text = self.ui.prompt(head, "Say to the GM:", "")
                 if text and text.strip():
@@ -1614,6 +1629,44 @@ class Client:
                     s["name"] = name.strip()
                     s["level"] = self.ui.prompt_int(head, "Level:", s.get("level", 0), 0, 10)
             self.save_sheet()
+
+    def screen_files(self):
+        """Everything you have pulled out of the NET this session."""
+        keep = 0
+        while True:
+            if self.drain_alerts():
+                continue
+            files = (self.snap() or {}).get("files") or []
+            items = []
+            for f in files:
+                items.append((
+                    "%s %s%s%s" % (
+                        pad(C.BOLD + f.get("name", "?") + C.RESET, 34),
+                        C.GREY, f.get("source", ""), C.RESET),
+                    f.get("id")))
+            if not items:
+                items.append((C.GREY + "(nothing downloaded yet -- run Download on a File)"
+                              + C.RESET, HEADING))
+
+            def head():
+                n = len((self.snap() or {}).get("files") or [])
+                return self.ui.banner("SAVED FILES",
+                                      "%d file(s) on your deck  %s  readable anywhere in the session"
+                                      % (n, G["dot"]))
+
+            choice = self.ui.menu(head, items, index=keep, watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            target = next((f for f in files if f.get("id") == choice), None)
+            if not target:
+                continue
+            body = [C.GREY + target.get("source", "") + C.RESET, ""]
+            for line in (target.get("content") or "(this file is empty)").split("\n"):
+                body.extend(wrap(line, 74) if line.strip() else [""])
+            self.ui.alert(self.ui.banner(target.get("name", "FILE").upper()), body, C.CYAN)
 
     def screen_feed(self):
         state = self.snap() or {}

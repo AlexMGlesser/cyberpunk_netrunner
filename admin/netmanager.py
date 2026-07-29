@@ -615,6 +615,14 @@ NET_ACTIONS = [
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
+    {"name": "Download", "cost": "1 NET Action",
+     "check": "Interface + 1d10 vs File DV",
+     "dv": "DV of the File",
+     "success": "A copy lands in your deck. It stays readable for the rest of "
+                "the session, whether or not you are still in the architecture.",
+     "failure": "The copy is corrupted and you get nothing.",
+     "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
+             "what something is; this is what actually takes it with you."},
     {"name": "Zap", "cost": "1 NET Action",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
@@ -676,6 +684,7 @@ def new_session(name):
         # sheet update from the player can never wipe out damage we recorded.
         "condition": {"hp": None, "status": ""},
         "auto_resolve": True,   # settle rolls against floor DVs without asking
+        "files": [],            # what the netrunner has downloaded and kept
         "nets": [],
         "run": None,          # {"net_id":..,"floor":int}
         "feed": [],           # player-visible messages
@@ -705,6 +714,7 @@ def new_floor(number):
         "def": 0,          # Black ICE / Demons: what a Zap has to beat
         "rez": 0,          # Black ICE / Demons: knock this to 0 and it dies
         "label": "",
+        "content": "",     # File floors: what the netrunner walks away with
         "state": "Intact",
         "revealed": False,
         "gm_notes": "",
@@ -1141,6 +1151,7 @@ class App:
                 "run": run,
                 "character": s.get("character") or {},
                 "condition": s.get("condition") or {"hp": None, "status": ""},
+                "files": s.get("files") or [],
                 "feed": s["feed"][-40:],
                 "actions": self.actions,
                 "operations": self.operations,
@@ -1192,7 +1203,10 @@ class App:
         # Zap is measured against DEF, everything else against the floor DV.
         against = floor.get("def") if action == "Zap" else floor.get("dv")
         if not against:
-            return None            # nothing recorded to beat, so ask the GM
+            if action == "Download":
+                against = 0        # no lock on it -- copying just works
+            else:
+                return None        # nothing recorded to beat, so ask the GM
 
         beat = total >= against
         verdict = "SUCCESS" if beat else "FAILURE"
@@ -1225,16 +1239,31 @@ class App:
                 return None
         return None
 
+    @staticmethod
+    def floor_blocks(floor):
+        """Does this floor stop someone moving deeper?
+
+        A Password or a live Black ICE / Demon does, until it has been beaten,
+        seized, infected or destroyed. Files, Control Nodes and empty floors
+        never block on their own.
+        """
+        if not floor:
+            return False
+        if floor.get("type") not in BLOCKING_TYPES:
+            return False
+        return floor.get("state", "Intact") not in CLEARED_STATES
+
     def _auto_move(self, net, run, down):
-        """Move them unless the floor they are standing on still blocks the way."""
+        """One floor at a time, and only if nothing is standing in the way."""
         floors = net["floors"]
         here = run.get("floor", 1)
+
         if not down:
             if here <= 1:
-                text = "Move Up -- you are already at the entry point."
+                text = "You are already at the entry point."
                 self.feed(text, "sys")
                 return text
-            run["floor"] = here - 1
+            run["floor"] = here - 1          # exactly one floor
             self.reveal_current_floor()
             above = next((f for f in floors if f["n"] == run["floor"]), None)
             text = "You climb back to floor %d -- %s." % (
@@ -1244,17 +1273,24 @@ class App:
             return text
 
         current = next((f for f in floors if f["n"] == here), None)
-        if current and current.get("type") in BLOCKING_TYPES \
-                and current.get("state", "Intact") not in CLEARED_STATES:
+        if self.floor_blocks(current):
             what = current["type"] if current.get("revealed") else "something"
-            text = "You cannot move past floor %d -- %s is still active." % (here, what)
+            if current["type"] == "Password":
+                how = "Backdoor it to get past."
+            elif current["type"] in DEMONS:
+                how = "Deal with it before you go deeper."
+            else:
+                how = "Kill it or get past it before you go deeper."
+            text = "Floor %d is blocked -- %s is still active. %s" % (here, what, how)
             self.feed(text, "alert")
             return text
+
         if here >= len(floors):
-            text = "Floor %d is the bottom of this architecture." % here
+            text = "Floor %d is the bottom of this architecture. There is nothing below." % here
             self.feed(text, "sys")
             return text
-        run["floor"] = here + 1
+
+        run["floor"] = here + 1              # exactly one floor
         self.reveal_current_floor()
         nxt = next((f for f in floors if f["n"] == run["floor"]), None)
         text = "You drop to floor %d -- %s." % (
@@ -1262,6 +1298,25 @@ class App:
         self.feed(text, "sys")
         self.log("AUTO: netrunner moved down to floor %d." % run["floor"])
         return text
+
+    def _auto_download(self, net, floor, beat, total, against):
+        if floor.get("type") != "File":
+            return "There is nothing here to copy."
+        if not beat:
+            return "The copy comes back corrupted."
+        floor["revealed"] = True
+        name = floor.get("label") or "Unnamed file (floor %d)" % floor["n"]
+        already = [f for f in self.session.setdefault("files", []) if f.get("name") == name]
+        if already:
+            return "You already have a copy of %s." % name
+        self.session["files"].append({
+            "id": uuid.uuid4().hex[:6],
+            "name": name,
+            "content": floor.get("content", ""),
+            "source": "%s, floor %d" % (net["name"], floor["n"]),
+            "t": now_stamp(),
+        })
+        return "%s is on your deck. Read it any time this session." % name
 
     def _auto_zap(self, net, floor, beat, total, against):
         if not beat:
@@ -1523,6 +1578,7 @@ class App:
                     None,
                     ("Send a message to the netrunner", "msg"),
                     ("Netrunner character sheet", "char"),
+                    ("Downloaded files (%d)" % len(self.session.get("files") or []), "files"),
                     ("Session log", "log"),
                     ("Netrunning reference", "ref"),
                     None,
@@ -1548,6 +1604,8 @@ class App:
                     self.screen_message()
                 elif choice == "char":
                     self.screen_character()
+                elif choice == "files":
+                    self.screen_files()
                 elif choice == "log":
                     self.screen_log()
                 elif choice == "ref":
@@ -1913,6 +1971,10 @@ class App:
                                          C.GREY + "   drops to 0 and it dies" + C.RESET
                                          if is_ice else ""), "rez"),
                 ("Label         %s" % (f.get("label") or C.GREY + "(none)" + C.RESET), "label"),
+                ("File contents %s%s" % (
+                    C.GREY + ((f.get("content") or "(empty)")[:44]) + C.RESET,
+                    C.GREY + "   what a Download hands them" + C.RESET
+                    if f["type"] == "File" else ""), "content"),
                 ("State         %s" % f.get("state", "Intact"), "state"),
                 ("GM notes      %s" % (C.GREY + (f.get("gm_notes") or "(none)") + C.RESET), "notes"),
                 None,
@@ -1954,6 +2016,12 @@ class App:
                 v = self.ui.prompt(head, "Label shown to the netrunner once revealed:", f.get("label", ""))
                 if v is not None:
                     f["label"] = v
+                    self.touch()
+            elif choice == "content":
+                v = self.ui.prompt(head, "File contents (only sent once they Download it):",
+                                   f.get("content", ""))
+                if v is not None:
+                    f["content"] = v
                     self.touch()
             elif choice == "state":
                 v = self.ui.menu(head, [(s, s) for s in FLOOR_STATES])
@@ -2205,6 +2273,68 @@ class App:
 
     # -- misc screens ------------------------------------------------------
 
+    def screen_files(self):
+        """What the netrunner has pulled out of the NET this session."""
+        keep = 0
+        while True:
+            files = self.session.setdefault("files", [])
+            items = []
+            for f in files:
+                items.append((
+                    "%s %s%s  %s%s" % (
+                        pad(C.BOLD + f.get("name", "?") + C.RESET, 34),
+                        C.GREY, f.get("source", ""), G["dot"], C.RESET),
+                    ("read", f["id"])))
+            if not items:
+                items.append((C.GREY + "(they have not downloaded anything yet)"
+                              + C.RESET, HEADING))
+            items.append(None)
+            items.append((C.CYAN + "+ Hand them a file directly" + C.RESET +
+                          C.GREY + "  no run needed" + C.RESET, ("give", None)))
+            head = self.ui.banner("DOWNLOADED FILES",
+                                  "%d file(s) on the netrunner's deck" % len(files))
+            choice = self.ui.menu(head, items, index=keep,
+                                  hotkeys={"d": ("delete", "del")},
+                                  watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if isinstance(choice, tuple) and choice[0] == "hotkey":
+                _, token, value = choice
+                if token == "del" and value and value[0] == "read":
+                    target = next((f for f in files if f["id"] == value[1]), None)
+                    if target and self.ui.confirm(
+                            head, "Wipe '%s' off their deck?" % target["name"], danger=True):
+                        files.remove(target)
+                        self.feed("%s has been wiped from your deck." % target["name"], "alert")
+                        self.touch()
+                continue
+            if not isinstance(choice, tuple):
+                continue
+            kind, fid = choice
+            if kind == "give":
+                name = self.ui.prompt(head, "File name:", "")
+                if not name or not name.strip():
+                    continue
+                body = self.ui.prompt(head, "Contents:", "")
+                if body is None:
+                    continue
+                files.append({"id": uuid.uuid4().hex[:6], "name": name.strip(),
+                              "content": body, "source": "handed over by the GM",
+                              "t": now_stamp()})
+                self.feed("%s lands on your deck." % name.strip(), "gm")
+                self.log("Gave the netrunner '%s'." % name.strip())
+                self.touch()
+            else:
+                target = next((f for f in files if f["id"] == fid), None)
+                if target:
+                    body = [C.GREY + target.get("source", "") + C.RESET, ""]
+                    for line in (target.get("content") or "(empty)").split("\n"):
+                        body.extend(wrap(line, 74) if line.strip() else [""])
+                    self.ui.alert(self.ui.banner(target["name"].upper()), body, C.CYAN)
+
     def screen_message(self):
         head = self.ui.banner("MESSAGE THE NETRUNNER")
         text = self.ui.prompt(head, "Message:", "")
@@ -2449,6 +2579,7 @@ AUTO_ACTIONS = {
     "Control": App._auto_control,
     "Virus": App._auto_virus,
     "Zap": App._auto_zap,
+    "Download": App._auto_download,
 }
 
 
