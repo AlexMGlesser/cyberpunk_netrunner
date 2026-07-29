@@ -85,7 +85,9 @@ A few screens add a single-key shortcut, always listed along the bottom of the s
 - **NET visible** — whether the architecture appears on the player's map at all. Hidden by default.
 - **Floor revealed** — whether a specific floor's details are sent. Unrevealed floors below the deepest revealed one are not transmitted, so the player genuinely cannot see how deep the architecture goes. They just get *"deeper floors unknown — run Pathfinder."*
 
-Reveal a floor when a Pathfinder succeeds and it appears on their screen instantly.
+Reveal a floor and it appears on their screen instantly.
+
+**The floor they're standing on is always visible**, whatever its revealed flag says — you see your own feet without scanning. It's revealed on entry and on every move, so Pathfinder does what it should: look *ahead*.
 
 **3. Run the session.** When the player jacks in, **Run control** shows where they are. From there you can move them between floors, reveal the floor they're standing on, or change a floor's state.
 
@@ -94,7 +96,7 @@ Reveal a floor when a Pathfinder succeeds and it appears on their screen instant
 | Action | On a success |
 | --- | --- |
 | Backdoor | floor marked **Defeated** — the way is open |
-| Pathfinder | the next unknown floor is revealed |
+| Pathfinder | the next unknown floor below is revealed |
 | Eye-Dee | the floor's contents are revealed |
 | Control | floor marked **Controlled** |
 | Virus | floor marked **Virused** |

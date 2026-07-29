@@ -1094,13 +1094,24 @@ class App:
                 if not net.get("visible"):
                     continue
                 floors = net["floors"]
+                # Standing on a floor means seeing it, whatever the stored flag
+                # says. Enforcing it here as well as on arrival means hiding
+                # floors from the GM side can never blind them to their own feet.
+                standing_on = None
+                run_state = s.get("run")
+                if run_state and run_state.get("net_id") == net["id"]:
+                    standing_on = run_state.get("floor", 1)
+
+                def visible_floor(f):
+                    return bool(f.get("revealed")) or f["n"] == standing_on
+
                 deepest = -1
                 for i, f in enumerate(floors):
-                    if f.get("revealed"):
+                    if visible_floor(f):
                         deepest = i
                 shown = []
                 for i, f in enumerate(floors[: deepest + 1]):
-                    if f.get("revealed"):
+                    if visible_floor(f):
                         shown.append({
                             "n": f["n"], "type": f["type"], "dv": f.get("dv"),
                             "def": f.get("def") or 0, "rez": f.get("rez") or 0,
@@ -1193,6 +1204,27 @@ class App:
         self.log("AUTO: " + text)
         return text
 
+    def reveal_current_floor(self):
+        """You can always see the floor you are standing on.
+
+        Pathfinder is for scanning ahead, not for looking at your own feet, so
+        anywhere the netrunner ends up is revealed to them automatically.
+        Returns the floor if this actually uncovered something new.
+        """
+        run = self.session.get("run")
+        if not run:
+            return None
+        net = self.net_by_id(run["net_id"])
+        if not net:
+            return None
+        for f in net["floors"]:
+            if f["n"] == run.get("floor", 1):
+                if not f.get("revealed"):
+                    f["revealed"] = True
+                    return f
+                return None
+        return None
+
     def _auto_move(self, net, run, down):
         """Move them unless the floor they are standing on still blocks the way."""
         floors = net["floors"]
@@ -1203,7 +1235,10 @@ class App:
                 self.feed(text, "sys")
                 return text
             run["floor"] = here - 1
-            text = "You climb back to floor %d." % run["floor"]
+            self.reveal_current_floor()
+            above = next((f for f in floors if f["n"] == run["floor"]), None)
+            text = "You climb back to floor %d -- %s." % (
+                run["floor"], above["type"] if above else "empty")
             self.feed(text, "sys")
             self.log("AUTO: netrunner moved up to floor %d." % run["floor"])
             return text
@@ -1220,9 +1255,10 @@ class App:
             self.feed(text, "sys")
             return text
         run["floor"] = here + 1
+        self.reveal_current_floor()
         nxt = next((f for f in floors if f["n"] == run["floor"]), None)
-        seen = nxt.get("type") if nxt and nxt.get("revealed") else "unknown ground"
-        text = "You drop to floor %d -- %s." % (run["floor"], seen)
+        text = "You drop to floor %d -- %s." % (
+            run["floor"], nxt["type"] if nxt else "empty")
         self.feed(text, "sys")
         self.log("AUTO: netrunner moved down to floor %d." % run["floor"])
         return text
@@ -1321,8 +1357,11 @@ class App:
                         summary = reset_net(net)
                         self.log("Auto-reset %s on entry (%s)." % (net["name"], summary))
                     self.session["run"] = {"net_id": net["id"], "floor": 1}
+                    self.reveal_current_floor()
                     self.log("%s started a run on %s." % (client.handle, net["name"]))
-                    self.feed("Jacked into %s." % net["name"], "sys")
+                    entry_floor = next((f for f in net["floors"] if f["n"] == 1), None)
+                    self.feed("Jacked into %s. Floor 1: %s." % (
+                        net["name"], entry_floor["type"] if entry_floor else "empty"), "sys")
                     self.touch()
 
             elif kind == "leave_run":
@@ -1754,6 +1793,7 @@ class App:
         summary = reset_net(net)
         if in_use:
             self.session["run"]["floor"] = 1
+            self.reveal_current_floor()
             self.feed("The architecture reshapes itself around you. You are back at the entry.", "sys")
         self.log("Reset %s (%s)." % (net["name"], summary))
         self.touch()
@@ -2059,14 +2099,20 @@ class App:
             if choice in ("down", "up"):
                 delta = 1 if choice == "down" else -1
                 run["floor"] = max(1, min(len(net["floors"]) or 1, run.get("floor", 1) + delta))
-                self.feed("You move to floor %d." % run["floor"], "sys")
+                self.reveal_current_floor()
+                where = next((f for f in net["floors"] if f["n"] == run["floor"]), None)
+                self.feed("You move to floor %d -- %s." % (
+                    run["floor"], where["type"] if where else "empty"), "sys")
                 self.touch()
             elif choice == "set":
                 v = self.ui.prompt_int(head, "Floor number:", run.get("floor", 1), 1,
                                        max(1, len(net["floors"])))
                 if v:
                     run["floor"] = v
-                    self.feed("You are on floor %d." % v, "sys")
+                    self.reveal_current_floor()
+                    where = next((f for f in net["floors"] if f["n"] == v), None)
+                    self.feed("You are on floor %d -- %s." % (
+                        v, where["type"] if where else "empty"), "sys")
                     self.touch()
             elif choice == "reveal":
                 if 0 <= floor_i < len(net["floors"]):
