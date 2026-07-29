@@ -579,7 +579,7 @@ NET_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action",
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1,
      "check": "Interface + 1d10 vs the attacker's roll",
      "dv": "the attacking Black ICE's roll, not a fixed number",
      "success": "The attack misses you entirely.",
@@ -685,6 +685,8 @@ def new_session(name):
         "condition": {"hp": None, "status": ""},
         "auto_resolve": True,   # settle rolls against floor DVs without asking
         "files": [],            # what the netrunner has downloaded and kept
+        # The GM decides when a round ends, so this only moves when they say so.
+        "turn": {"round": 1, "used": 0, "spent": {}},
         "nets": [],
         "run": None,          # {"net_id":..,"floor":int}
         "feed": [],           # player-visible messages
@@ -1152,6 +1154,13 @@ class App:
                 "character": s.get("character") or {},
                 "condition": s.get("condition") or {"hp": None, "status": ""},
                 "files": s.get("files") or [],
+                "turn": {
+                    "round": self.turn().get("round", 1),
+                    "used": self.turn().get("used", 0),
+                    "per_turn": self.actions_per_turn(),
+                    "left": self.actions_left(),
+                    "spent": dict(self.turn().get("spent", {})),
+                },
                 "feed": s["feed"][-40:],
                 "actions": self.actions,
                 "operations": self.operations,
@@ -1160,6 +1169,73 @@ class App:
             }
 
     # -- inbound from player ----------------------------------------------
+
+    # -- turns and NET Actions ---------------------------------------------
+
+    def turn(self):
+        return self.session.setdefault("turn", {"round": 1, "used": 0, "spent": {}})
+
+    def actions_per_turn(self):
+        try:
+            return max(1, int((self.session.get("character") or {}).get("actions_per_turn", 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    def catalog_entry(self, name):
+        for entry in self.actions + self.operations:
+            if entry["name"] == name:
+                return entry
+        return None
+
+    @staticmethod
+    def action_cost(entry):
+        """How many NET Actions this costs. Read off the catalogue so a GM can
+        change it in rules.json without touching code."""
+        if not entry:
+            return 1
+        raw = str(entry.get("cost", "")).strip()
+        head = raw.split(" ", 1)[0]
+        if head.isdigit():
+            return int(head)
+        return 0        # Movement, "--", and anything else that is not a count
+
+    def actions_left(self):
+        return max(0, self.actions_per_turn() - self.turn().get("used", 0))
+
+    def can_take(self, name):
+        """(allowed, reason). Reason is what the netrunner is told when refused."""
+        entry = self.catalog_entry(name)
+        turn = self.turn()
+        limit = (entry or {}).get("per_turn")
+        if limit:
+            if turn.get("spent", {}).get(name, 0) >= limit:
+                return False, ("%s is once per turn -- you have already used it this round. "
+                               "Wait for the GM to start the next round." % name)
+        cost = self.action_cost(entry)
+        if cost and cost > self.actions_left():
+            return False, ("No NET Actions left this round (%d of %d used). "
+                           "Wait for the GM to start the next round."
+                           % (turn.get("used", 0), self.actions_per_turn()))
+        return True, None
+
+    def spend_action(self, name):
+        entry = self.catalog_entry(name)
+        turn = self.turn()
+        cost = self.action_cost(entry)
+        if cost:
+            turn["used"] = turn.get("used", 0) + cost
+        if (entry or {}).get("per_turn"):
+            turn.setdefault("spent", {})[name] = turn.get("spent", {}).get(name, 0) + 1
+
+    def start_round(self, announce=True):
+        turn = self.turn()
+        turn["round"] = turn.get("round", 1) + 1
+        turn["used"] = 0
+        turn["spent"] = {}
+        if announce:
+            self.feed("Round %d. You have %d NET Action(s)."
+                      % (turn["round"], self.actions_per_turn()), "sys")
+        self.log("Started round %d." % turn["round"])
 
     # -- automatic resolution ----------------------------------------------
 
@@ -1428,6 +1504,13 @@ class App:
                     self.touch()
 
             elif kind == "action":
+                allowed, reason = self.can_take(msg.get("action", "?"))
+                if not allowed:
+                    client.send({"type": "denied", "reason": reason})
+                    self.log("Refused %s from %s: %s" % (msg.get("action"), client.handle, reason))
+                    self.bump()
+                    return
+                self.spend_action(msg.get("action", "?"))
                 entry = {
                     "id": uuid.uuid4().hex[:6],
                     "t": now_stamp(),
@@ -1569,6 +1652,9 @@ class App:
                     (pend_label, "pending"),
                     (run_label, "run"),
                     None,
+                    ("Round %d  %s  %d of %d NET Actions left" % (
+                        self.turn().get("round", 1), G["dot"],
+                        self.actions_left(), self.actions_per_turn()), "turn"),
                     ("Auto-resolve rolls   %s" % (
                         C.GREEN + "ON" + C.RESET + C.GREY +
                         "   rolls beat the floor DV without asking you" + C.RESET
@@ -1596,6 +1682,8 @@ class App:
                     self.screen_pending()
                 elif choice == "run":
                     self.screen_run_control()
+                elif choice == "turn":
+                    self.screen_turn()
                 elif choice == "auto":
                     self.session["auto_resolve"] = not self.session.get("auto_resolve", True)
                     self.log("Auto-resolve %s." % ("ON" if self.session["auto_resolve"] else "OFF"))
@@ -2150,6 +2238,10 @@ class App:
                 ("Reveal the floor they are standing on", "reveal"),
                 ("Set state of their current floor", "state"),
                 None,
+                (C.GREEN + "Start the next round" + C.RESET + C.GREY +
+                 "  refills their NET Actions" + C.RESET, "nextround"),
+                ("Turn & NET Actions", "turn"),
+                None,
                 ("Reset this architecture around them" + C.GREY +
                  "  back to floor 1, nothing revealed" + C.RESET, "reset"),
                 None,
@@ -2193,6 +2285,11 @@ class App:
                     if v:
                         net["floors"][floor_i]["state"] = v
                         self.touch()
+            elif choice == "nextround":
+                self.start_round()
+                self.touch()
+            elif choice == "turn":
+                self.screen_turn()
             elif choice == "reset":
                 self.reset_one(net, head)
             elif choice == "block":
@@ -2272,6 +2369,88 @@ class App:
         self.ui.alert(head, notes, C.GREEN)
 
     # -- misc screens ------------------------------------------------------
+
+    def screen_turn(self):
+        """Where the round lives. Nothing advances until you say so."""
+        keep = 0
+        while True:
+            turn = self.turn()
+            per = self.actions_per_turn()
+            left = self.actions_left()
+
+            def head():
+                t = self.turn()
+                used = t.get("used", 0)
+                bar = (C.GREEN + G["block"] * max(0, self.actions_left()) + C.RESET +
+                       C.GREY + G["block"] * min(used, per) + C.RESET) if per else ""
+                out = self.ui.banner("ROUND %d" % t.get("round", 1),
+                                     "the netrunner keeps going when you start the next one")
+                out.append(" " + C.GREY + "NET Actions " + C.RESET +
+                           C.BOLD + "%d of %d left" % (self.actions_left(), per) + C.RESET +
+                           "   " + bar)
+                spent = t.get("spent") or {}
+                once = [e["name"] for e in self.actions + self.operations if e.get("per_turn")]
+                if once:
+                    marks = []
+                    for name in once:
+                        done = spent.get(name, 0) >= (self.catalog_entry(name) or {}).get("per_turn", 1)
+                        marks.append((C.RED + name + " used" + C.RESET) if done
+                                     else (C.GREEN + name + " available" + C.RESET))
+                    out.append(" " + C.GREY + "once per turn: " + C.RESET +
+                               (C.GREY + "  " + G["dot"] + "  " + C.RESET).join(marks))
+                run = self.session.get("run")
+                if run:
+                    net = self.net_by_id(run["net_id"])
+                    out.append(" " + C.ORANGE + "in %s, floor %d" % (
+                        net["name"] if net else "?", run.get("floor", 1)) + C.RESET)
+                out.append("")
+                return out
+
+            items = [
+                (C.GREEN + G["arrow"] + " START THE NEXT ROUND" + C.RESET + C.GREY +
+                 "   refills their actions and clears once-per-turn limits" + C.RESET, "next"),
+                None,
+                ("Give them an extra action this round", "grant"),
+                ("Spend one of their actions", "spend"),
+                ("Set actions used directly (%d)" % turn.get("used", 0), "set"),
+                None,
+                ("Reset this round without advancing", "reset"),
+                ("Set the round number (%d)" % turn.get("round", 1), "round"),
+            ]
+            choice = self.ui.menu(head, items, index=keep,
+                                  body=lambda: self.feed_pane(5), watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if choice == "next":
+                self.start_round()
+                self.touch()
+            elif choice == "grant":
+                turn["used"] = max(0, turn.get("used", 0) - 1)
+                self.feed("You find room for one more action this round.", "sys")
+                self.touch()
+            elif choice == "spend":
+                turn["used"] = turn.get("used", 0) + 1
+                self.touch()
+            elif choice == "set":
+                v = self.ui.prompt_int(head, "NET Actions used this round:",
+                                       turn.get("used", 0), 0, 99)
+                if v is not None:
+                    turn["used"] = v
+                    self.touch()
+            elif choice == "reset":
+                turn["used"] = 0
+                turn["spent"] = {}
+                self.feed("Your actions are refreshed.", "sys")
+                self.log("Reset round %d." % turn.get("round", 1))
+                self.touch()
+            elif choice == "round":
+                v = self.ui.prompt_int(head, "Round number:", turn.get("round", 1), 1, 999)
+                if v is not None:
+                    turn["round"] = v
+                    self.touch()
 
     def screen_files(self):
         """What the netrunner has pulled out of the NET this session."""

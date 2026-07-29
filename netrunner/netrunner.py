@@ -515,7 +515,7 @@ FALLBACK_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action",
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1,
      "check": "Interface + 1d10 vs the attacker's roll",
      "dv": "the attacking Black ICE's roll, not a fixed number",
      "success": "The attack misses you entirely.",
@@ -1100,7 +1100,29 @@ class Client:
                "%s/%s" % (hp, ch.get("hp_max", "-")) + C.RESET)
         if cond.get("status"):
             out += "   " + C.RED + cond["status"] + C.RESET
+        turn = (self.snap() or {}).get("turn") or {}
+        if turn:
+            left = turn.get("left", 0)
+            col = C.GREEN if left > 0 else C.RED
+            out += (C.GREY + "   round " + C.RESET + str(turn.get("round", 1)) +
+                    C.GREY + "   actions " + C.RESET + col +
+                    "%d/%d" % (left, turn.get("per_turn", 1)) + C.RESET)
         return out
+
+    def action_available(self, entry):
+        """(allowed, why_not) -- mirrors the GM's rule so the list can say so
+        up front. The server still has the final word."""
+        turn = (self.snap() or {}).get("turn") or {}
+        if not turn:
+            return True, None
+        limit = entry.get("per_turn")
+        if limit and (turn.get("spent") or {}).get(entry["name"], 0) >= limit:
+            return False, "once per turn, already used"
+        raw = str(entry.get("cost", "")).strip().split(" ", 1)[0]
+        cost = int(raw) if raw.isdigit() else 0
+        if cost and cost > turn.get("left", 0):
+            return False, "no NET Actions left this round"
+        return True, None
 
     def net_by_id(self, net_id):
         state = self.snap() or {}
@@ -1223,12 +1245,16 @@ class Client:
             ops = state.get("operations") or FALLBACK_OPS
             items = []
             for a in actions:
-                items.append((pad(C.BOLD + C.GREEN + a["name"] + C.RESET, 18) +
-                              C.GREY + a["desc"] + C.RESET, ("act", a)))
+                ok, why = self.action_available(a)
+                name = (C.BOLD + C.GREEN + a["name"] + C.RESET) if ok else (C.GREY + a["name"] + C.RESET)
+                tail = (C.GREY + a["desc"][:46] + C.RESET) if ok else (C.RED + why + C.RESET)
+                items.append((pad(name, 18) + tail, ("act", a)))
             items.append(None)
             for o in ops:
-                items.append((pad(C.BOLD + o["name"] + C.RESET, 24) +
-                              C.GREY + o["desc"] + C.RESET, ("act", o)))
+                ok, why = self.action_available(o)
+                name = (C.BOLD + o["name"] + C.RESET) if ok else (C.GREY + o["name"] + C.RESET)
+                tail = (C.GREY + o["desc"][:42] + C.RESET) if ok else (C.RED + why + C.RESET)
+                items.append((pad(name, 24) + tail, ("act", o)))
             items += [
                 None,
                 ("Saved files (%d)" % len((self.snap() or {}).get("files") or []), ("files",)),
@@ -1260,6 +1286,15 @@ class Client:
                 self.submit_action(head, net, run, choice[1])
 
     def submit_action(self, head, net, run, action):
+        ok, why = self.action_available(action)
+        if not ok:
+            self.ui.alert(self.ui.banner(action["name"].upper(), why), [
+                "You cannot take this action right now.",
+                "",
+                "The GM starts the next round when they are ready -- that refills",
+                "your NET Actions and clears once-per-turn limits.",
+            ], C.YELLOW)
+            return
         state = self.snap() or {}
         ch = state.get("character") or {}
         interface = ch.get("interface", 0) or 0

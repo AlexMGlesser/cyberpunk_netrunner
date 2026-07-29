@@ -123,6 +123,22 @@ There's also **Disconnect the netrunner entirely** if you want them off the sess
 
 ---
 
+## Rounds and NET Actions
+
+The netrunner gets a number of NET Actions per round, taken from **NET Actions / turn** on their own sheet. Each action they spend comes off that budget, and when it's gone they can't act again until **you** start the next round. Nothing advances on its own.
+
+**Round N · X of Y NET Actions left** on the session menu opens the turn screen, and **Start the next round** is also on Run control, where you'll actually be mid-fight. Starting a round refills their actions and clears once-per-turn limits.
+
+The same screen lets you fudge it: grant an extra action, spend one on their behalf, set the count directly, refresh the round without advancing the number, or set the round number itself.
+
+**Slide is once per turn.** Even with actions to spare, a second Slide in the same round is refused. That limit is data, not code — `per_turn` in the catalogue, so you can put the same restriction on any action through `rules.json`.
+
+**Movement is free.** Move Down and Move Up cost nothing from the budget, so being out of actions doesn't strand them. Costs are read off each entry's `cost` field, so if your reading of the rules differs, change it in `rules.json` and both sides follow.
+
+The player sees `round 3 · actions 2/3` on their status line, and any action they can't currently take is greyed out with the reason next to it, before they pick it.
+
+---
+
 ## Files
 
 A **File** floor can carry actual content the netrunner walks away with.
