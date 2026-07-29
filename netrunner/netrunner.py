@@ -195,10 +195,12 @@ class C:
 UNICODE_GLYPHS = {
     "tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "h": "─", "v": "│",
     "dot": "•", "arrow": "▶", "block": "█", "vt": "├", "corner": "└",
+    "up": "▲", "down": "▼",
 }
 ASCII_GLYPHS = {
     "tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|",
     "dot": "*", "arrow": ">", "block": "#", "vt": "+", "corner": "\\",
+    "up": "^", "down": "v",
 }
 G = dict(UNICODE_GLYPHS)
 
@@ -254,6 +256,7 @@ def wrap(text, width):
 # --------------------------------------------------------------------------
 
 REFRESH = object()  # returned by menu() when watched state changed
+HEADING = object()  # a menu row that is drawn but cannot be selected
 
 
 class UI:
@@ -300,7 +303,8 @@ class UI:
         hotkeys = hotkeys or {}
         typed = ""
         token0 = watch() if watch else None
-        selectable = [i for i, it in enumerate(items) if it is not None]
+        selectable = [i for i, it in enumerate(items)
+                      if it is not None and it[1] is not HEADING]
         index = index if index in selectable else (selectable[0] if selectable else 0)
         scroll = 0
 
@@ -309,24 +313,49 @@ class UI:
             body_lines = (body() if callable(body) else list(body)) if body else []
 
             visible = self._filter(items, typed)
-            vis_sel = [i for i, it in visible if it is not None]
+            vis_sel = [i for i, it in visible
+                       if it is not None and it[1] is not HEADING]
             if vis_sel and index not in vis_sel:
                 index = vis_sel[0]
 
             _, h = self.size()
             lines = list(head_lines)
-            room = max(4, h - (len(head_lines) + len(body_lines) + 4))
+            # Budget rows precisely: whatever the header and the feed pane do not
+            # use is available for entries, less the scroll markers and footer.
+            # Row budget. The footer and scroll markers are non-negotiable; the
+            # body pane gives up rows before the list does, so a cramped window
+            # trims the feed rather than hiding entries behind a footer that
+            # scrolled off the bottom.
+            footer = 3 + (1 if foot else 0)         # blank + rule + hint (+ foot)
+            budget = h - 1 - len(head_lines) - 2 - footer
+            if body_lines:
+                max_body = budget - 4               # keep >= 3 list rows + a blank
+                if len(body_lines) > max_body:
+                    body_lines = ([body_lines[0]] + body_lines[-(max_body - 1):]
+                                  if max_body >= 2 else [])
+                if body_lines:
+                    budget -= 1 + len(body_lines)
+            room = max(1, budget)
 
+            # Scrolling must be measured in `visible` coordinates. `vis_sel`
+            # indexes only selectable rows, and mixing the two spaces pushes the
+            # highlight outside the rendered window as soon as spacers are in
+            # play -- which is what made off-screen entries unreachable once the
+            # architecture map or feed pane grew tall.
+            at = {real_i: k for k, (real_i, _it) in enumerate(visible)}
             if vis_sel:
-                pos = vis_sel.index(index) if index in vis_sel else 0
+                pos = at.get(index, 0)
                 if pos < scroll:
                     scroll = pos
-                if pos >= scroll + room:
+                elif pos >= scroll + room:
                     scroll = pos - room + 1
-            window = visible[scroll: scroll + room] if len(visible) > room else visible
+            scroll = max(0, min(scroll, max(0, len(visible) - room)))
+            window = visible[scroll: scroll + room]
 
             if not visible:
                 lines.append("   " + C.GREY + "(no matches)" + C.RESET)
+            if scroll > 0:
+                lines.append("   " + C.GREY + G["up"] + " %d more above" % scroll + C.RESET)
             for real_i, item in window:
                 if item is None:
                     lines.append("")
@@ -335,8 +364,9 @@ class UI:
                     lines.append(C.CYAN + " " + G["arrow"] + " " + C.RESET + C.BOLD + item[0] + C.RESET)
                 else:
                     lines.append("   " + item[0])
-            if len(visible) > len(window):
-                lines.append("   " + C.GREY + "... %d more" % (len(visible) - len(window)) + C.RESET)
+            below = len(visible) - (scroll + len(window))
+            if below > 0:
+                lines.append("   " + C.GREY + G["down"] + " %d more below" % below + C.RESET)
 
             if body_lines:
                 lines.append("")
@@ -749,7 +779,7 @@ class Client:
                         msg.get("players", 0), C.RESET),
                     ("connect", host, port)))
             if not items:
-                items.append((C.GREY + "(scanning the local net for open sessions...)" + C.RESET, None))
+                items.append((C.GREY + "(scanning the local net for open sessions...)" + C.RESET, HEADING))
             items.append(None)
             last = self.profile.get("last_host")
             if last:
@@ -867,7 +897,7 @@ class Client:
                         C.GREY, net.get("difficulty", ""), G["dot"], known, C.RESET, lock),
                     ("net", net["id"])))
             if not nets:
-                items.append((C.GREY + "(the GM has not put any architectures on your map yet)" + C.RESET, None))
+                items.append((C.GREY + "(the GM has not put any architectures on your map yet)" + C.RESET, HEADING))
             items += [
                 None,
                 ("Netrunning actions & reference", ("ref",)),
@@ -933,7 +963,7 @@ class Client:
 
             items = []
             if net.get("locked"):
-                items.append((C.RED + "LOCKED -- you cannot get in right now" + C.RESET, None))
+                items.append((C.RED + "LOCKED -- you cannot get in right now" + C.RESET, HEADING))
             else:
                 items.append((C.GREEN + "JACK IN" + C.RESET + C.GREY + "  start a run on this architecture" + C.RESET,
                               "jack"))

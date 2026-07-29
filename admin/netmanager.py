@@ -202,10 +202,12 @@ class C:
 UNICODE_GLYPHS = {
     "tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "h": "─", "v": "│",
     "dot": "•", "arrow": "▶", "block": "█", "vt": "├", "corner": "└",
+    "up": "▲", "down": "▼",
 }
 ASCII_GLYPHS = {
     "tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|",
     "dot": "*", "arrow": ">", "block": "#", "vt": "+", "corner": "\\",
+    "up": "^", "down": "v",
 }
 G = dict(UNICODE_GLYPHS)
 
@@ -258,6 +260,7 @@ def pad(s, width):
 # --------------------------------------------------------------------------
 
 REFRESH = object()  # returned by menu() when watched state changed
+HEADING = object()  # a menu row that is drawn but cannot be selected
 
 
 class UI:
@@ -317,7 +320,8 @@ class UI:
         hotkeys = hotkeys or {}
         typed = ""
         token0 = watch() if watch else None
-        selectable = [i for i, it in enumerate(items) if it is not None]
+        selectable = [i for i, it in enumerate(items)
+                      if it is not None and it[1] is not HEADING]
         index = index if index in selectable else (selectable[0] if selectable else 0)
         scroll = 0
 
@@ -326,24 +330,49 @@ class UI:
             body_lines = (body() if callable(body) else list(body)) if body else []
 
             visible = self._filter(items, typed)
-            vis_sel = [i for i, it in visible if it is not None]
+            vis_sel = [i for i, it in visible
+                       if it is not None and it[1] is not HEADING]
             if vis_sel and index not in vis_sel:
                 index = vis_sel[0]
 
             _, h = self.size()
             lines = list(head_lines)
-            room = max(4, h - (len(head_lines) + len(body_lines) + 4))
+            # Budget rows precisely: whatever the header and the feed pane do not
+            # use is available for entries, less the scroll markers and footer.
+            # Row budget. The footer and scroll markers are non-negotiable; the
+            # body pane gives up rows before the list does, so a cramped window
+            # trims the feed rather than hiding entries behind a footer that
+            # scrolled off the bottom.
+            footer = 3 + (1 if foot else 0)         # blank + rule + hint (+ foot)
+            budget = h - 1 - len(head_lines) - 2 - footer
+            if body_lines:
+                max_body = budget - 4               # keep >= 3 list rows + a blank
+                if len(body_lines) > max_body:
+                    body_lines = ([body_lines[0]] + body_lines[-(max_body - 1):]
+                                  if max_body >= 2 else [])
+                if body_lines:
+                    budget -= 1 + len(body_lines)
+            room = max(1, budget)
 
+            # Scrolling must be measured in `visible` coordinates. `vis_sel`
+            # indexes only selectable rows, and mixing the two spaces pushes the
+            # highlight outside the rendered window as soon as spacers are in
+            # play -- which is what made off-screen entries unreachable once a
+            # tall header or feed pane shrank the list.
+            at = {real_i: k for k, (real_i, _it) in enumerate(visible)}
             if vis_sel:
-                pos = vis_sel.index(index) if index in vis_sel else 0
+                pos = at.get(index, 0)
                 if pos < scroll:
                     scroll = pos
-                if pos >= scroll + room:
+                elif pos >= scroll + room:
                     scroll = pos - room + 1
-            window = visible[scroll : scroll + room] if len(visible) > room else visible
+            scroll = max(0, min(scroll, max(0, len(visible) - room)))
+            window = visible[scroll : scroll + room]
 
             if not visible:
                 lines.append("   " + C.GREY + "(no matches)" + C.RESET)
+            if scroll > 0:
+                lines.append("   " + C.GREY + G["up"] + " %d more above" % scroll + C.RESET)
             for real_i, item in window:
                 if item is None:
                     lines.append("")
@@ -353,8 +382,9 @@ class UI:
                     lines.append(C.CYAN + " " + G["arrow"] + " " + C.RESET + C.BOLD + label + C.RESET)
                 else:
                     lines.append("   " + label)
-            if len(visible) > len(window):
-                lines.append("   " + C.GREY + "... %d more (scroll with arrows)" % (len(visible) - len(window)) + C.RESET)
+            below = len(visible) - (scroll + len(window))
+            if below > 0:
+                lines.append("   " + C.GREY + G["down"] + " %d more below" % below + C.RESET)
 
             if body_lines:
                 lines.append("")
@@ -614,6 +644,7 @@ def new_net(name):
         "difficulty": "Standard",
         "visible": False,
         "locked": False,
+        "reset_on_entry": True,   # wipe progress automatically when they jack in
         "floors": [],
     }
 
@@ -660,6 +691,113 @@ def list_saves():
             continue
     out.sort(key=lambda p: p[1].get("updated", ""), reverse=True)
     return out
+
+
+# -- reset -----------------------------------------------------------------
+
+def reset_net(net):
+    """Put an architecture back the way it was built: every floor Intact and
+    unrevealed, nothing locked. The design (types, DVs, labels, GM notes) is
+    untouched -- only the netrunner's progress through it is wiped.
+    Returns a short description of what changed."""
+    touched = 0
+    for f in net["floors"]:
+        if f.get("state", "Intact") != "Intact" or f.get("revealed"):
+            touched += 1
+        f["state"] = "Intact"
+        f["revealed"] = False
+    was_locked = net.get("locked", False)
+    net["locked"] = False
+    bits = ["%d floor(s) cleared" % touched] if touched else ["already pristine"]
+    if was_locked:
+        bits.append("unlocked")
+    return ", ".join(bits)
+
+
+# -- architecture library --------------------------------------------------
+
+LIBRARY_DIR = os.path.join(HERE, "library")
+
+
+def net_template(net):
+    """A pristine, session-independent copy of an architecture, ready to reuse.
+    Design and GM notes are kept; run progress and visibility are not."""
+    return {
+        "kind": "cpred_net_architecture",
+        "schema": 1,
+        "name": net["name"],
+        "description": net.get("description", ""),
+        "difficulty": net.get("difficulty", "Standard"),
+        "exported": today(),
+        "floors": [
+            {
+                "n": i + 1,
+                "type": f.get("type", "Empty"),
+                "dv": f.get("dv"),
+                "label": f.get("label", ""),
+                "gm_notes": f.get("gm_notes", ""),
+            }
+            for i, f in enumerate(net.get("floors", []))
+        ],
+    }
+
+
+def net_from_template(data, name=None):
+    """Build a fresh in-session architecture from an exported template."""
+    net = new_net(name or data.get("name", "Imported NET"))
+    net["description"] = data.get("description", "")
+    net["difficulty"] = data.get("difficulty", "Standard")
+    for i, f in enumerate(data.get("floors", [])):
+        floor = new_floor(i + 1)
+        floor["type"] = f.get("type", "Empty")
+        floor["dv"] = f.get("dv")
+        floor["label"] = f.get("label", "")
+        floor["gm_notes"] = f.get("gm_notes", "")
+        net["floors"].append(floor)
+    return net
+
+
+def library_path(name):
+    return os.path.join(LIBRARY_DIR, slugify(name) + ".json")
+
+
+def export_net(net, overwrite_path=None):
+    os.makedirs(LIBRARY_DIR, exist_ok=True)
+    path = overwrite_path or library_path(net["name"])
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(net_template(net), fh, indent=2)
+    os.replace(tmp, path)
+    return path
+
+
+def list_library():
+    if not os.path.isdir(LIBRARY_DIR):
+        return []
+    out = []
+    for fn in sorted(os.listdir(LIBRARY_DIR)):
+        if not fn.endswith(".json"):
+            continue
+        path = os.path.join(LIBRARY_DIR, fn)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict) and "floors" in data:
+                out.append((path, data))
+        except Exception:
+            continue
+    out.sort(key=lambda p: p[1].get("name", "").lower())
+    return out
+
+
+def unique_net_name(session, name):
+    taken = {n["name"] for n in session["nets"]}
+    if name not in taken:
+        return name
+    i = 2
+    while "%s (%d)" % (name, i) in taken:
+        i += 1
+    return "%s (%d)" % (name, i)
 
 
 # --------------------------------------------------------------------------
@@ -965,6 +1103,9 @@ class App:
                 elif net.get("locked"):
                     client.send({"type": "denied", "reason": "That architecture is locked down."})
                 else:
+                    if net.get("reset_on_entry"):
+                        summary = reset_net(net)
+                        self.log("Auto-reset %s on entry (%s)." % (net["name"], summary))
                     self.session["run"] = {"net_id": net["id"], "floor": 1}
                     self.log("%s started a run on %s." % (client.handle, net["name"]))
                     self.feed("Jacked into %s." % net["name"], "sys")
@@ -1196,10 +1337,16 @@ class App:
             if items:
                 items.append(None)
             items.append((C.CYAN + "+ Create a new NET Architecture" + C.RESET, "__new__"))
+            items.append((C.CYAN + "+ Import an architecture" + C.RESET +
+                          C.GREY + "  from the library or another session" + C.RESET, "__import__"))
+            if self.session["nets"]:
+                items.append(("Reset every architecture" + C.GREY +
+                              "  clears all run progress" + C.RESET, "__resetall__"))
             head = self.ui.banner("NET ARCHITECTURES", "enter to edit  " + G["dot"] +
-                                  "  v toggles visibility to the netrunner")
+                                  "  v toggles visibility  " + G["dot"] + "  r resets progress")
             choice = self.ui.menu(head, items, index=keep,
-                                  hotkeys={"v": ("toggle visible", "vis")},
+                                  hotkeys={"v": ("toggle visible", "vis"),
+                                           "r": ("reset", "reset")},
                                   watch=lambda: self.version)
             keep = self.ui.last_index
             if choice is REFRESH:
@@ -1208,12 +1355,26 @@ class App:
                 return
             if isinstance(choice, tuple):  # hotkey
                 _, token, net_id = choice
-                if token == "vis" and net_id and net_id != "__new__":
-                    net = self.net_by_id(net_id)
+                net = self.net_by_id(net_id) if net_id else None
+                if net and token == "vis":
                     net["visible"] = not net["visible"]
                     self.log("%s is now %s." % (net["name"], "VISIBLE" if net["visible"] else "hidden"))
                     if net["visible"]:
                         self.feed("New architecture on your map: %s" % net["name"], "sys")
+                    self.touch()
+                elif net and token == "reset":
+                    self.reset_one(net, head)
+                continue
+            if choice == "__import__":
+                self.screen_import()
+                continue
+            if choice == "__resetall__":
+                if self.ui.confirm(head, "Reset all %d architectures? Every floor goes back to "
+                                         "Intact and unrevealed." % len(self.session["nets"])):
+                    for net in self.session["nets"]:
+                        reset_net(net)
+                    self.log("Reset every architecture.")
+                    self.feed("The architectures have been restored.", "sys")
                     self.touch()
                 continue
             if choice == "__new__":
@@ -1238,6 +1399,8 @@ class App:
                                else C.GREY + "hidden from the netrunner") + C.RESET)
             if net.get("locked"):
                 head.append(" " + C.RED + "LOCKED -- the netrunner cannot start a run here" + C.RESET)
+            if net.get("reset_on_entry"):
+                head.append(" " + C.CYAN + "AUTO-RESET -- wipes clean every time they jack in" + C.RESET)
             head.append("")
 
             items = []
@@ -1266,6 +1429,13 @@ class App:
                 ("Set difficulty (%s)" % net["difficulty"], ("diff", None)),
                 ("Reveal all floors to the netrunner", ("revealall", None)),
                 ("Hide all floors from the netrunner", ("hideall", None)),
+                None,
+                ("Reset this architecture" + C.GREY + "  every floor back to Intact and unrevealed"
+                 + C.RESET, ("reset", None)),
+                (("Stop auto-resetting when they jack in" if net.get("reset_on_entry")
+                  else "Auto-reset every time the netrunner jacks in"), ("autoreset", None)),
+                None,
+                ("Save to the architecture library", ("export", None)),
                 None,
                 (C.RED + "Delete this architecture" + C.RESET, ("delete", None)),
             ]
@@ -1320,6 +1490,15 @@ class App:
                 for f in net["floors"]:
                     f["revealed"] = (kind == "revealall")
                 self.touch()
+            elif kind == "reset":
+                self.reset_one(net, head)
+            elif kind == "autoreset":
+                net["reset_on_entry"] = not net.get("reset_on_entry")
+                self.log("%s: auto-reset on entry %s." % (
+                    net["name"], "ON" if net["reset_on_entry"] else "off"))
+                self.touch()
+            elif kind == "export":
+                self.export_one(net, head)
             elif kind == "delete":
                 if self.ui.confirm(head, "Delete '%s' and all its floors?" % net["name"], danger=True):
                     run = self.session.get("run")
@@ -1329,6 +1508,121 @@ class App:
                     self.log("Deleted NET '%s'." % net["name"])
                     self.touch()
                     return
+
+    # -- reset / library ---------------------------------------------------
+
+    def reset_one(self, net, head, ask=True):
+        """Wipe the netrunner's progress through one architecture."""
+        run = self.session.get("run")
+        in_use = bool(run and run["net_id"] == net["id"])
+        if ask:
+            warn = "Reset '%s'? Every floor goes back to Intact and unrevealed." % net["name"]
+            if in_use:
+                warn += " The netrunner is inside it right now."
+            if not self.ui.confirm(head, warn):
+                return False
+        summary = reset_net(net)
+        if in_use:
+            self.session["run"]["floor"] = 1
+            self.feed("The architecture reshapes itself around you. You are back at the entry.", "sys")
+        self.log("Reset %s (%s)." % (net["name"], summary))
+        self.touch()
+        return True
+
+    def export_one(self, net, head):
+        existing = library_path(net["name"])
+        if os.path.exists(existing):
+            if not self.ui.confirm(head, "'%s' is already in the library. Overwrite it?" % net["name"]):
+                return
+        try:
+            path = export_net(net)
+        except OSError as exc:
+            self.ui.alert(head, ["Could not write to the library:", str(exc)], C.RED)
+            return
+        self.log("Exported '%s' to the library." % net["name"])
+        self.ui.alert(head, [
+            "Saved to %s" % os.path.relpath(path, HERE),
+            "",
+            "%d floor(s) with their types, DVs, labels and GM notes." % len(net["floors"]),
+            "Run progress and visibility are not stored -- an imported copy",
+            "always starts pristine and hidden.",
+        ], C.GREEN)
+
+    def screen_import(self):
+        """Bring an architecture in from the library or from another session."""
+        while True:
+            head = self.ui.banner("IMPORT AN ARCHITECTURE",
+                                  "copies are independent -- editing one will not touch the other")
+            items = []
+            library = list_library()
+            if library:
+                items.append((C.GREY + "-- library --" + C.RESET, HEADING))
+                for path, data in library:
+                    items.append((
+                        "%s %s%s  %d floors  %s  saved %s%s" % (
+                            pad(C.BOLD + data.get("name", "?") + C.RESET, 30),
+                            C.GREY, G["dot"], len(data.get("floors", [])), G["dot"],
+                            data.get("exported", "?"), C.RESET),
+                        ("lib", path, data)))
+
+            others = []
+            for path, sess in list_saves():
+                if sess.get("id") == self.session["id"]:
+                    continue
+                for net in sess.get("nets", []):
+                    others.append((sess.get("name", "?"), net))
+            if others:
+                items.append(None)
+                items.append((C.GREY + "-- other sessions --" + C.RESET, HEADING))
+                for sess_name, net in others:
+                    items.append((
+                        "%s %s%s  %d floors  %s  from %s%s" % (
+                            pad(C.BOLD + net["name"] + C.RESET, 30),
+                            C.GREY, G["dot"], len(net.get("floors", [])), G["dot"],
+                            sess_name, C.RESET),
+                        ("sess", None, net_template(net))))
+
+            if not items:
+                self.ui.alert(head, [
+                    "Nothing to import yet.",
+                    "",
+                    "Open any architecture and choose 'Save to the architecture",
+                    "library' to build up a set you can reuse across sessions.",
+                    "Architectures from your other saved sessions show up here too.",
+                ], C.GREY)
+                return
+
+            choice = self.ui.menu(head, items,
+                                  hotkeys={"d": ("delete from library", "del")})
+            if choice is None:
+                return
+            if isinstance(choice, tuple) and choice[0] == "hotkey":
+                _, token, value = choice
+                if token == "del" and value and value[0] == "lib":
+                    if self.ui.confirm(head, "Remove '%s' from the library? The copy in this "
+                                             "session is untouched." % value[2].get("name", "?"),
+                                       danger=True):
+                        try:
+                            os.remove(value[1])
+                        except OSError as exc:
+                            self.ui.alert(head, ["Could not delete: %s" % exc], C.RED)
+                continue
+            if not isinstance(choice, tuple):
+                continue
+
+            _, _, data = choice
+            name = unique_net_name(self.session, data.get("name", "Imported NET"))
+            typed = self.ui.prompt(head, "Name it in this session:", name)
+            if typed is None:
+                continue
+            net = net_from_template(data, unique_net_name(self.session, typed.strip() or name))
+            self.session["nets"].append(net)
+            self.log("Imported NET '%s' (%d floors)." % (net["name"], len(net["floors"])))
+            self.touch()
+            self.ui.alert(head, ["'%s' imported, hidden from the netrunner." % net["name"],
+                                 "Make it visible when you are ready."], C.GREEN)
+            self.screen_net(net)
+            return
 
     def screen_floor(self, net, index):
         keep = 0
@@ -1506,6 +1800,9 @@ class App:
                 ("Reveal the floor they are standing on", "reveal"),
                 ("Set state of their current floor", "state"),
                 None,
+                ("Reset this architecture around them" + C.GREY +
+                 "  back to floor 1, nothing revealed" + C.RESET, "reset"),
+                None,
                 (C.RED + G["block"] + " BLOCK THEM OUT OF THIS RUN" + C.RESET, "block"),
                 ("End the run quietly (they jack out clean)", "endrun"),
                 None,
@@ -1540,6 +1837,8 @@ class App:
                     if v:
                         net["floors"][floor_i]["state"] = v
                         self.touch()
+            elif choice == "reset":
+                self.reset_one(net, head)
             elif choice == "block":
                 self.block_runner(net)
                 return
@@ -1586,17 +1885,35 @@ class App:
                 return
         else:
             msg = messages[preset]
-        lock = self.ui.confirm(head, "Also lock this architecture so they cannot re-enter?")
-        if lock:
+        after = self.ui.menu(head + ["", " " + C.GREY + "What happens to the architecture?" + C.RESET, ""], [
+            ("Leave it exactly as they left it", "keep"),
+            ("Reset it -- a fresh run if they come back", "reset"),
+            ("Lock it so they cannot re-enter", "lock"),
+            ("Reset it AND lock it", "both"),
+        ])
+        if after is None:
+            return
+        if after in ("lock", "both"):
             net["locked"] = True
         self.session["run"] = None
         self.session["pending"] = []
         self.feed(msg, "alert")
         self.log("BLOCKED the netrunner out of %s. (%s)" % (net["name"], msg))
+        if after in ("reset", "both"):
+            # reset_net clears `locked`, so re-apply it afterwards
+            summary = reset_net(net)
+            if after == "both":
+                net["locked"] = True
+            self.log("Reset %s after the block (%s)." % (net["name"], summary))
         self.touch(push=False)
         self.server.broadcast({"type": "blocked", "reason": msg, "net": net["name"]})
         self.server.push_state()
-        self.ui.alert(head, ["Netrunner ejected from %s." % net["name"]], C.GREEN)
+        notes = ["Netrunner ejected from %s." % net["name"]]
+        if after in ("reset", "both"):
+            notes.append("The architecture is pristine again.")
+        if after in ("lock", "both"):
+            notes.append("It is locked -- unlock it when you want them back in.")
+        self.ui.alert(head, notes, C.GREEN)
 
     # -- misc screens ------------------------------------------------------
 

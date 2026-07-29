@@ -2,7 +2,7 @@
 
 A two-program setup for running NET architectures at the table:
 
-- **`admin/netmanager.py`** — the Game Master console. Build architectures, decide what the player can see, watch their run, resolve NET Actions, block them out.
+- **`admin/netmanager.py`** — the Game Master console. Build architectures, decide what the player can see, watch their run, resolve NET Actions, block them out. Architectures can be saved to a reusable library and reset between runs.
 - **`netrunner/netrunner.py`** — the player's terminal. Finds your session on the local network, jacks in, and updates live as you change things.
 
 Both are single files with no dependencies beyond Python itself.
@@ -63,7 +63,9 @@ Every screen works the same way:
 | `Home` / `End` | Jump to the first or last entry |
 | `Ctrl+C` | Quit; the session is saved first |
 
-A few screens add a single-key shortcut, always listed along the bottom of the screen — `v` toggles a NET's visibility in the architecture list, `r` toggles a floor's revealed flag in the NET editor.
+When a list is taller than the window it scrolls, and `▲ n more above` / `▼ n more below` show what's off-screen.
+
+A few screens add a single-key shortcut, always listed along the bottom of the screen — in the architecture list `v` toggles a NET's visibility and `r` resets it; in the NET editor `r` toggles a floor's revealed flag; in the import list `d` removes a library entry.
 
 ---
 
@@ -88,9 +90,40 @@ Reveal a floor when a Pathfinder succeeds and it appears on their screen instant
 
 **4. Resolve their actions.** Every NET Action they take lands in **Pending NET Actions** with the roll they made. Pick it, choose Success / Failure / Partial, type what happens, and it appears in their feed.
 
-**5. Block them out.** **Run control → BLOCK THEM OUT OF THIS RUN**. Pick a preset (Black ICE flatline, Demon trace, sysop pulls the plug) or write your own. The player gets a full-screen alert and is dumped back to their game menu. You'll be asked whether to also lock the architecture so they can't walk straight back in.
+**5. Block them out.** **Run control → BLOCK THEM OUT OF THIS RUN**. Pick a preset (Black ICE flatline, Demon trace, sysop pulls the plug) or write your own. The player gets a full-screen alert and is dumped back to their game menu. You're then asked what happens to the architecture: leave it as they left it, reset it, lock it, or both.
 
 There's also **Disconnect the netrunner entirely** if you want them off the session completely.
+
+---
+
+## Resetting an architecture
+
+Reset puts an architecture back the way you built it — every floor **Intact** and **unrevealed**, nothing locked. Your design is untouched: types, DVs, labels and GM notes all survive. Only the netrunner's progress through it is wiped.
+
+Three ways to do it:
+
+- **NET editor → Reset this architecture** — one architecture, right now.
+- **Architecture list → `r`** — resets the highlighted one without opening it. **Reset every architecture** in the same list does the lot.
+- **NET editor → Auto-reset every time the netrunner jacks in** — the one you probably want for a set piece they'll attempt more than once. With this on, the architecture wipes itself clean the moment they enter, so a second run starts fresh with nothing scanned. The NET editor header shows **AUTO-RESET** while it's active.
+
+Resetting while they're inside is allowed — they're moved back to floor 1 and told the architecture reshaped around them.
+
+---
+
+## The architecture library
+
+Build an architecture once and reuse it in any session.
+
+**NET editor → Save to the architecture library** writes it to `admin/library/<name>.json`. What's stored is a clean template: floor types, DVs, labels, difficulty, description and your GM notes. Run progress and visibility are deliberately not stored, so an imported copy always arrives pristine and hidden.
+
+**Architecture list → Import an architecture** pulls one in. That screen offers two sources:
+
+- everything in your library
+- every architecture in your **other saved sessions** — no exporting needed first
+
+Imports are independent copies with fresh IDs. Editing the copy never touches the original, and you're asked to name it — a clash with an existing name gets `(2)` appended rather than silently overwriting. Press `d` in the import list to remove something from the library; the copies already in your sessions are unaffected.
+
+Library files are plain JSON, so you can hand-edit them or share one with another GM by copying the file into their `admin/library/`.
 
 ---
 
@@ -111,11 +144,12 @@ Taking an action walks you through: pick a target, then choose **Roll it** (the 
 The GM console saves after every single change — creating a NET, revealing a floor, resolving an action. There is no save button to forget.
 
 - GM sessions: `admin/saves/<session-name>-<id>.json`
+- Architecture library: `admin/library/<name>.json`
 - Player profile: `netrunner/saves/profile.json`
 
 **Continue a session** on the main menu picks up exactly where you stopped: architectures, floor states, character sheet, feed and log all intact. Save files are plain JSON, so you can read or hand-edit them between sessions.
 
-To move a campaign to a different machine, copy the JSON file into that machine's `admin/saves/` folder.
+To move a campaign to a different machine, copy the JSON file into that machine's `admin/saves/` folder. To move just one architecture, export it and copy that file into `admin/library/`.
 
 ---
 
