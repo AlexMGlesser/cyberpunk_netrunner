@@ -15,7 +15,7 @@ Both are single files with no dependencies beyond Python itself.
 - Both machines on the **same local network** (same Wi-Fi or same switch).
 - Any terminal that handles ANSI colour: Terminal.app, iTerm, GNOME Terminal, Konsole, Windows Terminal, PowerShell, or VS Code's terminal. The old `cmd.exe` works but looks worse — prefer Windows Terminal.
 
-Nothing to install. No `pip`, no virtualenv.
+Nothing to install. No `pip`, no virtualenv, no extra files — each program is one `.py` you can copy anywhere on its own, and it creates the folders it needs on first run. `python3 tests/test_selfcontained.py` verifies this.
 
 ---
 
@@ -298,7 +298,14 @@ netrunner.py  [--host ADDRESS] [--port 7717] [--ascii]
 
 ## Tests
 
-`tests/test_generate.py` covers the generator — run it with `python3 tests/test_generate.py`. It checks the structural rules statistically across 300 architectures per difficulty, since the output is random.
+```bash
+python3 tests/test_selfcontained.py   # proves both scripts need nothing but Python
+python3 tests/test_generate.py        # the architecture generator's structure rules
+```
+
+`test_selfcontained.py` guards the promise at the top of this file: every import is standard library, neither script imports the other, platform-only modules stay behind their guard, nothing needs newer than Python 3.7, and either script works alone in an empty folder with no `rules.json`, `saves/` or `library/` present.
+
+`test_generate.py` checks the generator's structural rules statistically across 300 architectures per difficulty, since the output is random.
 
 ---
 
