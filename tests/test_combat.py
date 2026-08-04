@@ -47,8 +47,11 @@ def bench(per_turn=3):
     app.session["condition"] = {"hp": 30, "status": ""}
     net = A.new_net("Fight"); net["visible"] = True
     f1 = A.new_floor(1); f1["type"] = "Password"; f1["dv"] = 6
-    f2 = A.new_floor(2); f2.update({"type": "Killer", "dv": 8, "def": 4, "rez": 12,
-                                    "atk": 5, "damage": "3d6", "revealed": True})
+    # Hellhound is Anti-Personnel, so it comes for the netrunner. Killer and the
+    # other Anti-Program ICE go after rezzed software instead.
+    f2 = A.new_floor(2); f2.update({"type": "Hellhound", "dv": 8, "def": 4, "rez": 12,
+                                    "atk": 5, "per": 6, "spd": 0, "damage": "2d6",
+                                    "revealed": True})
     net["floors"] = [f1, f2]
     app.session["nets"] = [net]; app.session["run"] = {"net_id": net["id"], "floor": 2}
     return app, net
@@ -119,7 +122,7 @@ app.session["condition"]["hp"] = 30
 r = app.ice_attacks(ice, None, Fixed([10, 1, 6, 6, 6]))   # big attack, tiny defence
 check("ICE can hit the netrunner", app.session["condition"]["hp"] < 30,
       (r, app.session["condition"]["hp"]))
-check("the damage is rolled from its dice", "3d6" in r, r)
+check("the damage is rolled from its dice", "2d6" in r or "3d6" in r, r)
 check("the hit is reported with the HP left", "HP" in r, r)
 app, net = bench()
 app.session["condition"]["hp"] = 30
@@ -144,9 +147,10 @@ check("restoring brings it back to full REZ",
 check("Restore costs two NET Actions",
       A.App.action_cost(app.catalog_entry("Restore a Program")) == 2)
 app, net = bench()
-noguns = dict(net["floors"][1]); noguns["damage"] = ""
+noguns = dict(net["floors"][1]); noguns["damage"] = ""; noguns["type"] = "Custom ICE"
+noguns_ok = True
 r = app.ice_attacks(noguns, None, Fixed([10, 1]))
-check("ICE with no damage set defers to the GM", "no damage is set" in r, r)
+check("unnamed ICE with no damage set defers to the GM", "no damage is set" in r, r)
 
 # ---------- it all shows up where it should ----------
 app, net = bench()
@@ -236,12 +240,12 @@ check("new floors have ATK and damage fields", "atk" in f and "damage" in f, lis
 app, net = bench()
 p = A.save_session(app.session)
 saved = json.load(open(p))
-check("ICE stats persist", saved["nets"][0]["floors"][1]["damage"] == "3d6")
+check("ICE stats persist", saved["nets"][0]["floors"][1]["damage"] == "2d6")
 act(app, "Run a Program", program="Sword")
 p = A.save_session(app.session)
 check("rezzed programs persist", len(json.load(open(p))["rezzed"]) == 1)
-check("anti-personnel and anti-program ICE are distinguished",
-      "Killer" in A.ANTI_PERSONNEL and "Asp" in A.ANTI_PROGRAM
+check("ICE classes match the book, not my earlier guess",
+      "Killer" in A.ANTI_PROGRAM and "Asp" in A.ANTI_PERSONNEL
       and A.BLACK_ICE == A.ANTI_PERSONNEL | A.ANTI_PROGRAM)
 
 # ---------- the player's catalogue matches the GM's ----------
@@ -255,15 +259,25 @@ check("the default deck has damage dice",
       N.default_character()["programs"][0]["damage"] == "3d6")
 
 # ---------- generated architectures come fight-ready ----------
+# Not every piece of ICE deals damage -- Asp destroys a program, Scorpion
+# drains MOVE, Skunk just marks you. What matters is that each one has its
+# stats and something to do on a hit.
 bad = []
 for tier in A.DIFFICULTIES:
     for _ in range(120):
         gen = A.generate_architecture(tier)
         for f in gen["floors"]:
             if f["type"] in A.BLACK_ICE | A.DEMONS:
-                if not (f["def"] and f["rez"] and f["atk"] and A.roll_dice(f["damage"])[0]):
+                spec = A.BLACK_ICE_STATS.get(f["type"])
+                has_effect = bool(spec and spec.get("effect")) or bool(A.roll_dice(f["damage"])[0])
+                if not (f["def"] and f["rez"] and f["atk"] and has_effect):
                     bad.append((tier, f["type"]))
 check("every generated piece of ICE can actually fight", not bad, bad[:3])
+noharm = [n for n in A.BLACK_ICE_STATS
+          if not A.BLACK_ICE_STATS[n].get("damage")
+          and A.BLACK_ICE_STATS[n]["effect"] not in ("brain",)]
+check("ICE that does no damage still has a real effect",
+      set(noharm) >= {"Asp", "Scorpion", "Skunk"}, noharm)
 atk = {t: [f["atk"] for _ in range(80) for f in A.generate_architecture(t)["floors"] if f.get("atk")]
        for t in A.DIFFICULTIES}
 avg = {t: sum(v) / len(v) for t, v in atk.items() if v}

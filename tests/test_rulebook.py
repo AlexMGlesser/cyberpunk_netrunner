@@ -17,6 +17,24 @@ def check(l, c, e=""):
     print(("  OK   " if c else "  FAIL ") + l + ((" -> " + str(e)) if not c else ""))
     if not c: fails.append(l)
 
+class Rig:
+    """Rigged dice: the attack lands, the defence rolls low, damage maxes out.
+
+    `seq` feeds the first rolls in order (attack d10, then defence d10); after
+    that everything rolls the top of its die so damage is deterministic.
+    """
+    def __init__(self, seq=(10, 1)):
+        self.seq = list(seq); self.i = 0
+    def randint(self, a, b):
+        if self.i < len(self.seq):
+            v = self.seq[self.i]; self.i += 1
+            return max(a, min(b, v))
+        return b
+    def choice(self, seq): return list(seq)[0]
+
+Max = Rig
+
+
 A.SAVE_DIR = "/tmp/rb_saves"; shutil.rmtree(A.SAVE_DIR, ignore_errors=True); os.makedirs(A.SAVE_DIR)
 
 def bench(dvs=(6, 9, 12, 15)):
@@ -97,7 +115,7 @@ check("an attack that loses the contest misses", "miss" in lo.lower(), lo)
 # --- Derezzed is not destroyed; restoring costs 2 NET Actions -------------
 app, net = bench(); act(app, "Run a Program", program="Sword")
 prog = app.session["rezzed"][0]; prog["rez"] = 1
-app.ice_attacks(net["floors"][2], prog, type("F", (), {"randint": staticmethod(lambda a, b: b)})())
+app.ice_attacks(net["floors"][2], prog, Rig())
 check("a program at 0 REZ stays on the deck", len(app.session["rezzed"]) == 1)
 check("it is marked derezzed rather than deleted", prog["derezzed"] is True, prog)
 check("a derezzed program cannot attack",
@@ -144,16 +162,17 @@ check("generated ICE gets PER and SPD too", all(f["per"] and f["spd"] for f in i
 
 # --- walking into ICE gives it a free swing if it is faster ---------------
 app, net = bench()
-net["floors"][1]["type"] = "Killer"
-net["floors"][1].update({"def": 2, "rez": 12, "atk": 99, "per": 6, "spd": 99, "damage": "3d6"})
+# Hellhound is Anti-Personnel, so it comes for the netrunner. Killer would not.
+net["floors"][1]["type"] = "Hellhound"
+net["floors"][1].update({"def": 2, "rez": 20, "atk": 99, "per": 6, "spd": 99, "damage": "2d6"})
 net["floors"][0]["state"] = "Defeated"
 hp_before = app.session["condition"]["hp"]
 act(app, "Move Down a Floor")
-check("very fast ICE gets its hit in as you arrive",
+check("very fast Anti-Personnel ICE gets its hit in as you arrive",
       app.session["condition"]["hp"] < hp_before, app.session["condition"])
 app, net = bench()
-net["floors"][1].update({"type": "Killer", "def": 2, "rez": 12, "atk": 5,
-                         "per": 6, "spd": 0, "damage": "3d6"})
+net["floors"][1].update({"type": "Hellhound", "def": 2, "rez": 20, "atk": 5,
+                         "per": 6, "spd": 0, "damage": "2d6"})
 net["floors"][0]["state"] = "Defeated"
 hp_before = app.session["condition"]["hp"]
 act(app, "Move Down a Floor")
@@ -164,6 +183,171 @@ for name in ("Attack", "Zap", "Slide", "Pathfinder"):
     gm = [a for a in A.NET_ACTIONS if a["name"] == name][0]
     pl = [a for a in N.FALLBACK_ACTIONS if a["name"] == name][0]
     check("%s reads the same on both sides" % name, gm["check"] == pl["check"], (gm["check"], pl["check"]))
+
+
+# ==========================================================================
+# The Black ICE table, and what each one does on a hit
+# ==========================================================================
+print()
+
+
+BOOK = {   # name: (class, PER, SPD, ATK, DEF, REZ)
+    "Asp": ("Anti-Personnel", 4, 6, 2, 2, 15),
+    "Giant": ("Anti-Personnel", 2, 2, 8, 4, 25),
+    "Hellhound": ("Anti-Personnel", 6, 6, 6, 2, 20),
+    "Kraken": ("Anti-Personnel", 6, 2, 8, 4, 30),
+    "Liche": ("Anti-Personnel", 8, 2, 6, 2, 25),
+    "Raven": ("Anti-Personnel", 6, 4, 4, 2, 15),
+    "Scorpion": ("Anti-Personnel", 2, 6, 2, 2, 15),
+    "Skunk": ("Anti-Personnel", 2, 4, 4, 2, 10),
+    "Wisp": ("Anti-Personnel", 4, 4, 4, 2, 15),
+    "Dragon": ("Anti-Program", 6, 4, 6, 6, 30),
+    "Killer": ("Anti-Program", 4, 8, 6, 2, 20),
+    "Sabertooth": ("Anti-Program", 8, 6, 6, 2, 25),
+}
+for name, (cls, per, spd, atk, dfn, rez) in BOOK.items():
+    s = A.BLACK_ICE_STATS.get(name)
+    check("%s has its table stats" % name,
+          s and (s["cls"], s["per"], s["spd"], s["atk"], s["def"], s["rez"])
+          == (cls, per, spd, atk, dfn, rez), s)
+check("Killer, Dragon and Sabertooth are Anti-Program",
+      A.ANTI_PROGRAM == {"Dragon", "Killer", "Sabertooth"}, A.ANTI_PROGRAM)
+check("the other nine are Anti-Personnel", len(A.ANTI_PERSONNEL) == 9, A.ANTI_PERSONNEL)
+
+def ice_bench(kind):
+    app, net = bench()
+    f = net["floors"][2]; f["type"] = kind
+    f.update({k: v for k, v in A.BLACK_ICE_STATS[kind].items()
+              if k in ("per", "spd", "atk", "def", "rez")})
+    f["damage"] = A.BLACK_ICE_STATS[kind].get("damage", "")
+    app.session["run"]["floor"] = 3
+    return app, net, f
+
+def rez(app, name):
+    spec = [p for p in A.PROGRAM_LIBRARY if p["name"] == name][0]
+    app.session["character"]["programs"].append(dict(spec))
+    act(app, "Run a Program", program=name)
+    return app.session["rezzed"][-1]
+
+# Hellhound: 2d6 brain, then fire for 2 HP at the end of each turn
+app, net, f = ice_bench("Hellhound")
+hp = app.session["condition"]["hp"]
+r = app.ice_attacks(f, None, Rig())
+check("Hellhound does brain damage", app.session["condition"]["hp"] < hp, r)
+check("Hellhound sets them on fire", app.has_status("fire"), r)
+hp = app.session["condition"]["hp"]
+app.start_round()
+check("fire burns 2 HP when the round turns", app.session["condition"]["hp"] == hp - 2,
+      app.session["condition"])
+
+# Wisp: 1d6 brain and one fewer NET Action next turn, minimum 2
+app, net, f = ice_bench("Wisp")
+app.session["character"]["actions_per_turn"] = 5
+app.ice_attacks(f, None, Rig())
+app.start_round()
+check("Wisp costs them a NET Action next turn", app.actions_per_turn() == 4,
+      app.actions_per_turn())
+app, net, f = ice_bench("Wisp")
+app.session["character"]["actions_per_turn"] = 2
+app.ice_attacks(f, None, Rig()); app.start_round()
+check("the NET Action penalty never drops below 2", app.actions_per_turn() == 2)
+
+# Kraken: pinned until the end of the next turn
+app, net, f = ice_bench("Kraken")
+app.ice_attacks(f, None, Rig())
+check("Kraken pins them", app.has_status("pinned"))
+r = act(app, "Move Down a Floor")
+check("a pinned netrunner cannot go deeper", app.session["run"]["floor"] == 3, r)
+app.start_round()
+check("the pin lifts when the round turns", not app.has_status("pinned"))
+
+# Giant: throws them out of the run entirely
+app, net, f = ice_bench("Giant")
+app.ice_attacks(f, None, Rig())
+check("Giant forces them out of the architecture", app.session["run"] is None)
+
+# Liche and Scorpion drain stats
+app, net, f = ice_bench("Liche")
+r = app.ice_attacks(f, None, Rig())
+check("Liche drains INT, REF and DEX", "INT, REF and DEX" in r, r)
+app, net, f = ice_bench("Scorpion")
+r = app.ice_attacks(f, None, Rig())
+check("Scorpion drains MOVE", "MOVE" in r, r)
+
+# Skunk: -2 to Slide until derezzed
+app, net, f = ice_bench("Skunk")
+app.ice_attacks(f, None, Rig())
+check("Skunk marks them", app.has_status("skunk"))
+r = act(app, "Slide", total=99, floor=3)
+check("the Skunk penalty is applied to Slide", "-2 from Skunk" in r, r)
+
+# Asp destroys a program outright
+app, net, f = ice_bench("Asp")
+prog = rez(app, "Sword")
+r = app.ice_attacks(f, None, Rig())
+check("Asp destroys a program outright", app.session["rezzed"] == [], (r, app.session["rezzed"]))
+
+# Raven derezzes a Defender then does 1d6
+app, net, f = ice_bench("Raven")
+armor = rez(app, "Armor")
+hp = app.session["condition"]["hp"]
+r = app.ice_attacks(f, None, Rig())
+check("Raven derezzes a Defender", armor["derezzed"] is True, r)
+check("Raven then hits the brain", app.session["condition"]["hp"] < hp, r)
+
+# Anti-Program ICE: enough damage to derez destroys instead
+app, net, f = ice_bench("Killer")
+prog = rez(app, "Sword"); prog["rez"] = 4; prog["rez_max"] = 4
+r = app.apply_ice_effect(A.BLACK_ICE_STATS["Killer"], "Killer", None, Rig())
+check("Killer destroys a program it would have derezzed",
+      app.session["rezzed"] == [] and "DESTROYED" in r, r)
+app, net, f = ice_bench("Killer")
+prog = rez(app, "Armor"); prog["rez"] = 99; prog["rez_max"] = 99
+r = app.apply_ice_effect(A.BLACK_ICE_STATS["Killer"], "Killer", None, Rig())
+check("a program that survives is only damaged", prog["rez"] < 99 and prog["rez"] > 0, r)
+check("Anti-Program ICE picks a program as its target",
+      A.App.ice_target_for.__name__ == "ice_target_for")
+app, net, f = ice_bench("Killer")
+prog = rez(app, "Sword")
+check("it targets a rezzed program", app.ice_target_for(f) is not None)
+app, net, f = ice_bench("Hellhound")
+rez(app, "Sword")
+check("Anti-Personnel ICE targets the netrunner", app.ice_target_for(f) is None)
+
+# --- Defenders --------------------------------------------------------------
+app, net, f = ice_bench("Hellhound")
+rez(app, "Armor")
+hp = app.session["condition"]["hp"]
+r = app.brain_damage(10, "", "Something hits you")
+check("Armor lowers brain damage by 4", app.session["condition"]["hp"] == hp - 6, r)
+check("and says so", "Armor soaks 4" in r, r)
+app, net, f = ice_bench("Hellhound")
+shield = rez(app, "Shield")
+hp = app.session["condition"]["hp"]
+r = app.brain_damage(10, "", "A program hits you", black_ice=False)
+check("Shield stops a non-Black ICE hit entirely", app.session["condition"]["hp"] == hp, r)
+check("and derezzes itself doing it", shield["derezzed"] is True, r)
+
+# --- Boosters ---------------------------------------------------------------
+app, net = bench(dvs=(6, 12, 20, 20))
+rez(app, "See Ya")
+r = act(app, "Pathfinder", total=10, floor=1)
+check("See Ya adds +2 to Pathfinder", net["floors"][1]["revealed"] is True, r)
+app, net = bench()
+rez(app, "Speedy Gonzalvez")
+check("Speedy Gonzalvez adds +2 Speed", app.actions_per_turn() == 3 + 2, app.actions_per_turn())
+app, net = bench()
+check("no Booster, no bonus", app.boost_for("Pathfinder") == 0)
+
+# --- Sword and Banhammer roll different dice by target ----------------------
+sword = [p for p in A.PROGRAM_LIBRARY if p["name"] == "Sword"][0]
+check("Sword does 3d6 to Black ICE", sword["damage"] == "3d6", sword)
+check("Sword does 2d6 to anything else", sword["damage_alt"] == "2d6", sword)
+ban = [p for p in A.PROGRAM_LIBRARY if p["name"] == "Banhammer"][0]
+check("Banhammer is the other way round",
+      ban["damage"] == "2d6" and ban["damage_alt"] == "3d6", ban)
+check("the stock library carries all 15 programs", len(A.PROGRAM_LIBRARY) == 15)
+check("the player has the same library", len(N.PROGRAM_LIBRARY) == 15)
 
 print("\n" + ("ALL CHECKS PASSED" if not fails else "FAILURES: " + repr(fails)))
 sys.exit(1 if fails else 0)

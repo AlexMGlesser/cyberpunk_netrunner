@@ -149,10 +149,34 @@ Scanning always starts from the floor they're standing on and stops at the botto
 - **Attack** swings a rezzed Attacker: *Interface + program ATK + 1d10* against the target's *DEF + 1d10*. On a hit its damage dice come off the target's REZ.
 - **Zap** needs no program: *Interface + 1d10* against *DEF + 1d10*, for 1d6.
 - **Slide** flees a single non-Demon Black ICE: *Interface + 1d10* against its *PER + 1d10*. On a success they break away and pull back a floor. Once per turn, and it won't work on a Demon.
+**Programs from the book are built in.** On their sheet, **Load a program from the list** offers all fifteen — Sword, Banhammer, Hellbolt, Armor, Flak, Shield, Eraser, See Ya, Speedy Gonzalvez, Worm and the rest — with stats and effects filled in. Three of them apply themselves automatically:
+
+- **Armor** lowers brain damage by 4
+- **Shield** stops the first non-Black-ICE hit outright, then derezzes itself
+- **See Ya**, **Worm**, **Eraser** and **Speedy Gonzalvez** add their +2 to Pathfinder, Backdoor, Cloak and NET Actions respectively
+
+Sword and Banhammer roll different dice depending on whether they're hitting Black ICE or not, and that's handled for you.
+
 - A program reduced to **0 REZ is derezzed, not destroyed** — it stays on the deck, useless, until they spend **2 NET Actions** on **Restore a Program**.
 - Swinging at something that isn't ICE just tells them so rather than bothering you.
 
 **Your side.** Black ICE and Demons carry the full five stats in the floor editor — **PER** (what a Slide must beat), **SPD** (the free hit when they walk in), **ATK**, **DEF** and **REZ** — plus a **damage** die.
+
+**Name a floor after a real piece of Black ICE and it offers to fill in its stats**, and from then on it does what that ICE does rather than just rolling a damage die:
+
+| | Does |
+| --- | --- |
+| Hellhound | brain damage, then sets the deck on fire — 2 HP at the end of every turn until they put it out |
+| Kraken | brain damage, and pins them: no going deeper and no safe Jack Out until the round turns |
+| Wisp | brain damage, and one fewer NET Action next turn (never below 2) |
+| Giant | brain damage and throws them out of the architecture entirely |
+| Liche / Scorpion | drains INT/REF/DEX, or MOVE, for the hour |
+| Skunk | marks them — every Slide check at −2 until it's derezzed |
+| Asp | destroys one of their rezzed programs outright |
+| Raven | derezzes a Defender, then hits the brain |
+| Killer / Dragon / Sabertooth | **Anti-Program** — go after rezzed software, and damage enough to derez *destroys* instead |
+
+Anti-Personnel ICE comes for the netrunner; Anti-Program ICE goes for a rezzed program at random. Generated architectures use these real stats too.
 
 Give a piece of ICE an **SPD** and it gets an ambush check the moment they arrive on its floor: *its SPD + 1d10* against their *Interface + 1d10*. If it wins, it lands its effect immediately, before anyone acts. Leave SPD at 0 and it simply waits. **NET combat**, on the session menu and on Run control, is where you use them:
 

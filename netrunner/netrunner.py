@@ -632,8 +632,44 @@ PROFILE = os.path.join(SAVE_DIR, "profile.json")
 # tracks what happens TO you during a run -- current HP and status -- which is
 # kept separately as "condition" so the two can never overwrite each other.
 
+PROGRAM_LIBRARY = [
+    {"name": "Sword", "cls": "Anti-Program Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "3d6", "damage_alt": "2d6",
+     "effect": "3d6 REZ to Black ICE, 2d6 REZ to anything else."},
+    {"name": "Banhammer", "cls": "Anti-Program Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "2d6", "damage_alt": "3d6",
+     "effect": "3d6 REZ to non-Black ICE, 2d6 REZ to Black ICE."},
+    {"name": "DeckKRASH", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Forces an enemy netrunner into an unsafe Jack Out."},
+    {"name": "Hellbolt", "cls": "Anti-Personnel Attacker", "atk": 2, "def": 0, "rez": 0,
+     "damage": "2d6", "effect": "2d6 brain damage, and sets their deck on fire."},
+    {"name": "Nervescrub", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Drops their INT, REF and DEX by 1d6 each for an hour."},
+    {"name": "Poison Flatline", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Destroys a random non-Black ICE program on their deck."},
+    {"name": "Superglue", "cls": "Anti-Personnel Attacker", "atk": 2, "def": 0, "rez": 0,
+     "damage": "", "effect": "Pins them for 1d6 rounds. Once per netrun."},
+    {"name": "Vrizzbolt", "cls": "Anti-Personnel Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "1d6", "effect": "1d6 brain damage and one fewer NET Action next turn."},
+    {"name": "Armor", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "soak4", "effect": "Lowers all brain damage you take by 4."},
+    {"name": "Flak", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "flak", "effect": "Drops non-Black ICE Attacker ATK against you to 0."},
+    {"name": "Shield", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "shield", "effect": "Stops the first non-Black ICE hit, then derezzes itself."},
+    {"name": "Eraser", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Cloak", "effect": "+2 to your Cloak Checks while rezzed."},
+    {"name": "See Ya", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Pathfinder", "effect": "+2 to your Pathfinder Checks while rezzed."},
+    {"name": "Speedy Gonzalvez", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Speed", "effect": "+2 to your Speed while rezzed."},
+    {"name": "Worm", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Backdoor", "effect": "+2 to your Backdoor Checks while rezzed."},
+]
+
+
 PROGRAM_CLASSES = [
-    "Attacker", "Defender", "Booster", "Anti-Program Attacker", "Black ICE",
+    "Anti-Program Attacker", "Anti-Personnel Attacker", "Defender", "Booster",
 ]
 
 DEFAULT_SKILLS = [
@@ -653,12 +689,7 @@ def default_character():
         "actions_per_turn": 1,
         "hp_max": 25,
         "deck": {"name": "Cyberdeck", "slots": 7, "hardware": []},
-        "programs": [
-            {"name": "Sword", "cls": "Attacker", "atk": 3, "def": 0, "rez": 7,
-             "damage": "3d6", "effect": "Cuts programs and Black ICE."},
-            {"name": "Armor", "cls": "Defender", "atk": 0, "def": 4, "rez": 7,
-             "damage": "", "effect": "Soaks damage aimed at you."},
-        ],
+        "programs": [dict(p) for p in PROGRAM_LIBRARY if p["name"] in ("Sword", "Armor")],
         "skills": [dict(s) for s in DEFAULT_SKILLS],
         "notes": "",
     }
@@ -1123,8 +1154,8 @@ class Client:
                C.GREY + "   actions/turn " + C.RESET + str(ch.get("actions_per_turn", "-")) +
                C.GREY + "   HP " + C.RESET + hp_col +
                "%s/%s" % (hp, ch.get("hp_max", "-")) + C.RESET)
-        if cond.get("status"):
-            out += "   " + C.RED + cond["status"] + C.RESET
+        for status in (self.snap() or {}).get("statuses") or []:
+            out += "   " + C.RED + status["text"] + C.RESET
         turn = (self.snap() or {}).get("turn") or {}
         if turn:
             left = turn.get("left", 0)
@@ -1677,7 +1708,9 @@ class Client:
                     ("edit", i)))
             if items:
                 items.append(None)
-            items.append((C.CYAN + "+ Load a program" + C.RESET, ("add", None)))
+            items.append((C.CYAN + "+ Load a program from the list" + C.RESET +
+                          C.GREY + "  stats filled in for you" + C.RESET, ("stock", None)))
+            items.append((C.CYAN + "+ Load a program I write myself" + C.RESET, ("add", None)))
             head = lambda: self.sheet_head("PROGRAMS", "what you can rez during a run")
             choice = self.ui.menu(head, items, index=keep)
             keep = self.ui.last_index
@@ -1686,7 +1719,22 @@ class Client:
             if not isinstance(choice, tuple):
                 continue
             kind, i = choice
-            if kind == "add":
+            if kind == "stock":
+                have = {p.get("name") for p in programs}
+                free = [p for p in PROGRAM_LIBRARY if p["name"] not in have]
+                if not free:
+                    self.ui.alert(head, ["You already have one of everything."], C.GREY)
+                    continue
+                pick = self.ui.menu(head, [
+                    (pad(C.BOLD + p["name"] + C.RESET, 20) +
+                     pad(C.GREY + p["cls"] + C.RESET, 28) +
+                     C.YELLOW + "ATK %-2s DEF %-2s REZ %-2s %-5s" % (
+                         p["atk"], p["def"], p["rez"], p.get("damage") or "") + C.RESET +
+                     C.GREY + "  " + p["effect"][:40] + C.RESET, p) for p in free])
+                if pick:
+                    programs.append(dict(pick))
+                    self.save_sheet()
+            elif kind == "add":
                 programs.append(new_program())
                 self.save_sheet()
                 self.screen_program(len(programs) - 1)

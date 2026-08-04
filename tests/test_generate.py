@@ -63,10 +63,15 @@ for t in TIERS:
     check("%s: the bottom is harder than the top on average" % t,
           sum(bots) / len(bots) > sum(tops) / len(tops),
           (sum(tops) / len(tops), sum(bots) / len(bots)))
-    ice = [[f for f in n["floors"] if f.get("rez")] for n in nets]
-    ice = [l for l in ice if len(l) >= 2]
-    check("%s: ICE gets tougher deeper in" % t,
-          all(all(a["rez"] <= b["rez"] for a, b in zip(l, l[1:])) for l in ice))
+    # Named Black ICE carries its own fixed stats from the book, so REZ no
+    # longer climbs with depth -- a Skunk really can sit below a Kraken.
+    ice = [f for n in nets for f in n["floors"] if f["type"] in A.BLACK_ICE]
+    check("%s: named ICE uses its book stats exactly" % t,
+          all((f["per"], f["spd"], f["atk"], f["def"], f["rez"])
+              == (A.BLACK_ICE_STATS[f["type"]]["per"], A.BLACK_ICE_STATS[f["type"]]["spd"],
+                  A.BLACK_ICE_STATS[f["type"]]["atk"], A.BLACK_ICE_STATS[f["type"]]["def"],
+                  A.BLACK_ICE_STATS[f["type"]]["rez"]) for f in ice),
+          [f["type"] for f in ice[:3]])
 
 # ---------- difficulty grows with tier ----------
 mean = lambda v: sum(v) / len(v) if v else 0
@@ -78,7 +83,7 @@ check("architectures get deeper with every tier",
       avg_floors["Basic"] < avg_floors["Standard"] < avg_floors["Uncommon"] < avg_floors["Advanced"],
       avg_floors)
 avg_rez = {t: mean([f["rez"] for n in SAMPLE[t] for f in n["floors"] if f.get("rez")]) for t in TIERS}
-check("ICE gets tougher with every tier",
+check("tougher ICE is drawn at higher tiers",
       avg_rez["Basic"] < avg_rez["Standard"] < avg_rez["Uncommon"] < avg_rez["Advanced"], avg_rez)
 ice_share = {t: mean([1.0 if f["type"] in A.BLACK_ICE | A.DEMONS else 0.0
                       for n in SAMPLE[t] for f in n["floors"]]) for t in TIERS}

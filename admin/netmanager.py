@@ -553,9 +553,76 @@ FLOOR_STATES = ["Intact", "Defeated", "Alerted", "Controlled", "Virused",
 PATHFINDER_BASE = 6     # to read the floor directly beneath you
 PATHFINDER_STEP = 4     # added for each floor deeper than that
 
-ANTI_PERSONNEL = {"Hellhound", "Sabertooth", "Kraken", "Dragon", "Killer", "Liche"}
-ANTI_PROGRAM = {"Asp", "Giant", "Raven", "Scorpion", "Skunk", "Wisp"}
-BLACK_ICE = ANTI_PERSONNEL | ANTI_PROGRAM
+# Black ICE, straight off the table in the netrunning chapter. `effect` is the
+# machine-readable version of what the book says each one does on a hit.
+BLACK_ICE_STATS = {
+    # Anti-Personnel -- these hunt the netrunner
+    "Asp":        {"cls": "Anti-Personnel", "per": 4, "spd": 6, "atk": 2, "def": 2, "rez": 15,
+                   "effect": "destroy_program"},
+    "Giant":      {"cls": "Anti-Personnel", "per": 2, "spd": 2, "atk": 8, "def": 4, "rez": 25,
+                   "effect": "brain", "damage": "3d6", "then": "jack_out_unsafe"},
+    "Hellhound":  {"cls": "Anti-Personnel", "per": 6, "spd": 6, "atk": 6, "def": 2, "rez": 20,
+                   "effect": "brain", "damage": "2d6", "then": "fire"},
+    "Kraken":     {"cls": "Anti-Personnel", "per": 6, "spd": 2, "atk": 8, "def": 4, "rez": 30,
+                   "effect": "brain", "damage": "3d6", "then": "pinned"},
+    "Liche":      {"cls": "Anti-Personnel", "per": 8, "spd": 2, "atk": 6, "def": 2, "rez": 25,
+                   "effect": "stat_drain", "stats": "INT, REF and DEX"},
+    "Raven":      {"cls": "Anti-Personnel", "per": 6, "spd": 4, "atk": 4, "def": 2, "rez": 15,
+                   "effect": "derez_defender", "damage": "1d6"},
+    "Scorpion":   {"cls": "Anti-Personnel", "per": 2, "spd": 6, "atk": 2, "def": 2, "rez": 15,
+                   "effect": "stat_drain", "stats": "MOVE"},
+    "Skunk":      {"cls": "Anti-Personnel", "per": 2, "spd": 4, "atk": 4, "def": 2, "rez": 10,
+                   "effect": "slide_penalty"},
+    "Wisp":       {"cls": "Anti-Personnel", "per": 4, "spd": 4, "atk": 4, "def": 2, "rez": 15,
+                   "effect": "brain", "damage": "1d6", "then": "slow"},
+    # Anti-Program -- these hunt the netrunner's software
+    "Dragon":     {"cls": "Anti-Program", "per": 6, "spd": 4, "atk": 6, "def": 6, "rez": 30,
+                   "effect": "kill_program", "damage": "6d6"},
+    "Killer":     {"cls": "Anti-Program", "per": 4, "spd": 8, "atk": 6, "def": 2, "rez": 20,
+                   "effect": "kill_program", "damage": "4d6"},
+    "Sabertooth": {"cls": "Anti-Program", "per": 8, "spd": 6, "atk": 6, "def": 2, "rez": 25,
+                   "effect": "kill_program", "damage": "6d6"},
+}
+
+ANTI_PERSONNEL = {k for k, v in BLACK_ICE_STATS.items() if v["cls"] == "Anti-Personnel"}
+ANTI_PROGRAM = {k for k, v in BLACK_ICE_STATS.items() if v["cls"] == "Anti-Program"}
+BLACK_ICE = set(BLACK_ICE_STATS)
+
+# The stock programs, so a netrunner can load a real deck without typing stats.
+PROGRAM_LIBRARY = [
+    {"name": "Sword", "cls": "Anti-Program Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "3d6", "damage_alt": "2d6",
+     "effect": "3d6 REZ to Black ICE, 2d6 REZ to anything else."},
+    {"name": "Banhammer", "cls": "Anti-Program Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "2d6", "damage_alt": "3d6",
+     "effect": "3d6 REZ to non-Black ICE, 2d6 REZ to Black ICE."},
+    {"name": "DeckKRASH", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Forces an enemy netrunner into an unsafe Jack Out."},
+    {"name": "Hellbolt", "cls": "Anti-Personnel Attacker", "atk": 2, "def": 0, "rez": 0,
+     "damage": "2d6", "effect": "2d6 brain damage, and sets their deck on fire."},
+    {"name": "Nervescrub", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Drops their INT, REF and DEX by 1d6 each for an hour."},
+    {"name": "Poison Flatline", "cls": "Anti-Personnel Attacker", "atk": 0, "def": 0, "rez": 0,
+     "damage": "", "effect": "Destroys a random non-Black ICE program on their deck."},
+    {"name": "Superglue", "cls": "Anti-Personnel Attacker", "atk": 2, "def": 0, "rez": 0,
+     "damage": "", "effect": "Pins them for 1d6 rounds. Once per netrun."},
+    {"name": "Vrizzbolt", "cls": "Anti-Personnel Attacker", "atk": 1, "def": 0, "rez": 0,
+     "damage": "1d6", "effect": "1d6 brain damage and one fewer NET Action next turn."},
+    {"name": "Armor", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "soak4", "effect": "Lowers all brain damage you take by 4."},
+    {"name": "Flak", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "flak", "effect": "Drops non-Black ICE Attacker ATK against you to 0."},
+    {"name": "Shield", "cls": "Defender", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "defends": "shield", "effect": "Stops the first non-Black ICE hit, then derezzes itself."},
+    {"name": "Eraser", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Cloak", "effect": "+2 to your Cloak Checks while rezzed."},
+    {"name": "See Ya", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Pathfinder", "effect": "+2 to your Pathfinder Checks while rezzed."},
+    {"name": "Speedy Gonzalvez", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Speed", "effect": "+2 to your Speed while rezzed."},
+    {"name": "Worm", "cls": "Booster", "atk": 0, "def": 0, "rez": 7, "damage": "",
+     "boosts": "Backdoor", "effect": "+2 to your Backdoor Checks while rezzed."},
+]
 DEMONS = {"Imp", "Efreet", "Balron"}
 
 # A floor you have to get through before moving deeper.
@@ -979,12 +1046,19 @@ def generate_architecture(difficulty, rng=None):
         elif kind == "Control Node":
             floor["label"] = "wired to %s" % (nodes.pop() if nodes else "something")
         elif kind != "Password":
-            floor["def"] = defs[ice_i] if ice_i < len(defs) else cfg["def"][0]
-            floor["rez"] = rezzes[ice_i] if ice_i < len(rezzes) else cfg["rez"][0]
-            floor["atk"] = atks[ice_i] if ice_i < len(atks) else cfg["atk"][0]
-            floor["per"] = pers[ice_i] if ice_i < len(pers) else cfg["atk"][0]
-            floor["spd"] = spds[ice_i] if ice_i < len(spds) else cfg["atk"][0]
-            floor["damage"] = rng.choice(cfg["damage"])
+            spec = BLACK_ICE_STATS.get(kind)
+            if spec:
+                # Real Black ICE has fixed stats -- use them rather than inventing.
+                for key in ("per", "spd", "atk", "def", "rez"):
+                    floor[key] = spec[key]
+                floor["damage"] = spec.get("damage", "")
+            else:
+                floor["def"] = defs[ice_i] if ice_i < len(defs) else cfg["def"][0]
+                floor["rez"] = rezzes[ice_i] if ice_i < len(rezzes) else cfg["rez"][0]
+                floor["atk"] = atks[ice_i] if ice_i < len(atks) else cfg["atk"][0]
+                floor["per"] = pers[ice_i] if ice_i < len(pers) else cfg["atk"][0]
+                floor["spd"] = spds[ice_i] if ice_i < len(spds) else cfg["atk"][0]
+                floor["damage"] = rng.choice(cfg["damage"])
             ice_i += 1
         net["floors"].append(floor)
     return net
@@ -1374,6 +1448,7 @@ class App:
                 "condition": s.get("condition") or {"hp": None, "status": ""},
                 "files": s.get("files") or [],
                 "rezzed": s.get("rezzed") or [],
+                "statuses": s.get("statuses") or [],
                 "turn": {
                     "round": self.turn().get("round", 1),
                     "used": self.turn().get("used", 0),
@@ -1397,9 +1472,14 @@ class App:
 
     def actions_per_turn(self):
         try:
-            return max(1, int((self.session.get("character") or {}).get("actions_per_turn", 1)))
+            base = max(1, int((self.session.get("character") or {}).get("actions_per_turn", 1)))
         except (TypeError, ValueError):
-            return 1
+            base = 1
+        base += self.boost_for("Speed")                 # Speedy Gonzalvez
+        penalty = int(self.turn().get("penalty", 0) or 0)
+        if penalty:
+            base = max(2, base - penalty)               # the book's minimum of 2
+        return base
 
     def catalog_entry(self, name):
         for entry in self.actions + self.operations:
@@ -1449,9 +1529,16 @@ class App:
 
     def start_round(self, announce=True):
         turn = self.turn()
+        # Anything that burns at the end of a turn does so now.
+        if self.has_status("fire"):
+            burn = self.brain_damage(2, "", "The fire burns you", black_ice=True)
+            self.feed(burn, "alert")
+            self.log("FIRE: " + burn)
+        self.clear_status("pinned")             # Kraken lasts to the end of the next turn
         turn["round"] = turn.get("round", 1) + 1
         turn["used"] = 0
         turn["spent"] = {}
+        turn["penalty"] = turn.pop("penalty_next", 0)
         if announce:
             self.feed("Round %d. You have %d NET Action(s)."
                       % (turn["round"], self.actions_per_turn()), "sys")
@@ -1536,10 +1623,16 @@ class App:
             die = random.randint(1, 10)
             against = base + die
             contest = "%s %d + d10 %d = %d" % (stat.upper(), base, die, against)
+            if action == "Slide" and self.has_status("skunk"):
+                total -= 2                      # Skunk
+                contest += ", you at -2 from Skunk"
         elif action == "Pathfinder":
             below = [f for f in net["floors"] if f["n"] > floor["n"]]
             against = int(below[0].get("dv") or 0) if below else 0
+            total += self.boost_for("Pathfinder")       # See Ya
         else:
+            total += self.boost_for(action)             # Worm, Eraser
+        if action not in ("Zap", "Attack", "Slide", "Pathfinder"):
             against = floor.get("dv")
         if not against and action not in ("Download", "Pathfinder", "Zap", "Attack", "Slide"):
             return None        # nothing recorded to beat, so ask the GM
@@ -1612,6 +1705,11 @@ class App:
                 run["floor"], above["type"] if above else "empty")
             self.feed(text, "sys")
             self.log("AUTO: netrunner moved up to floor %d." % run["floor"])
+            return text
+
+        if self.has_status("pinned"):
+            text = "You are pinned -- you cannot move deeper until it wears off."
+            self.feed(text, "alert")
             return text
 
         current = next((f for f in floors if f["n"] == here), None)
@@ -1712,6 +1810,9 @@ class App:
             "rez": rez, "rez_max": rez,
             "derezzed": False,
             "damage": spec.get("damage") or "",
+            "damage_alt": spec.get("damage_alt") or "",
+            "defends": spec.get("defends") or "",
+            "boosts": spec.get("boosts") or "",
         })
         return "%s is up and running (REZ %d)." % (spec.get("name", "?"), rez)
 
@@ -1726,7 +1827,12 @@ class App:
             return "There is nothing here to attack."
         if not beat:
             return "%s swings and misses." % prog["name"]
-        damage, detail = roll_dice(prog.get("damage"))
+        # Sword and Banhammer roll different dice against Black ICE than against
+        # anything else, so pick the right one for the target.
+        dice = prog.get("damage")
+        if prog.get("damage_alt") and floor.get("type") not in BLACK_ICE | DEMONS:
+            dice = prog["damage_alt"]
+        damage, detail = roll_dice(dice)
         floor["revealed"] = True
         if not damage:
             return ("%s connects, but it has no damage set -- call it yourself."
@@ -1740,6 +1846,16 @@ class App:
         floor["state"] = "Rezzed"
         return "%s hits for %d (%s). %s has %d REZ left." % (
             prog["name"], damage, detail, floor.get("type", "it"), rez)
+
+    def ice_target_for(self, floor, rng=None):
+        """Anti-Program ICE goes after a rezzed program at random; the rest
+        come for the netrunner."""
+        rng = rng or random
+        if floor.get("type") not in ANTI_PROGRAM:
+            return None
+        live = [p for p in self.session.get("rezzed", [])
+                if not p.get("derezzed") and p.get("rez", 0) > 0]
+        return rng.choice(live) if live else None
 
     def ice_attacks(self, floor, target, rng=None):
         """Resolve one attack by a floor's ICE. `target` is None for the
@@ -1764,6 +1880,14 @@ class App:
             self.log("ICE: " + head + " -- miss")
             return head + ". It misses."
 
+        # A named piece of Black ICE does what the table says it does.
+        spec = BLACK_ICE_STATS.get(name)
+        if spec and target is None:
+            text = head + ". " + self.apply_ice_effect(spec, name, target, rng)
+            self.feed(text, "alert")
+            self.log("ICE: " + text)
+            return text
+
         damage, detail = roll_dice(floor.get("damage"), rng)
         if not damage:
             text = head + ". It connects, but no damage is set for it."
@@ -1772,12 +1896,7 @@ class App:
             return text
 
         if target is None:
-            cond = self.session.setdefault("condition", {"hp": None, "status": ""})
-            hp_max = (self.session.get("character") or {}).get("hp_max") or 0
-            current = cond.get("hp") if cond.get("hp") is not None else hp_max
-            cond["hp"] = current - damage
-            text = "%s. It hits you for %d (%s). HP %s/%s." % (
-                head, damage, detail, cond["hp"], hp_max)
+            text = head + ". " + self.brain_damage(damage, detail, "It hits you")
         else:
             target["rez"] = max(0, target.get("rez", 0) - damage)
             text = "%s. It hits %s for %d (%s)." % (head, target["name"], damage, detail)
@@ -1791,6 +1910,137 @@ class App:
         self.feed(text, "alert")
         self.log("ICE: " + text)
         return text
+
+    # -- what a hit actually does -----------------------------------------
+
+    def defenders(self):
+        return [p for p in self.session.get("rezzed", [])
+                if p.get("defends") and not p.get("derezzed") and p.get("rez", 0) > 0]
+
+    def boost_for(self, check_name):
+        """+2 per Booster rezzed for that check, per the book."""
+        total = 0
+        for p in self.session.get("rezzed", []):
+            if p.get("derezzed") or p.get("rez", 0) <= 0:
+                continue
+            if p.get("boosts") == check_name:
+                total += 2
+        return total
+
+    def brain_damage(self, amount, detail, source, black_ice=True):
+        """Apply damage to the netrunner, honouring rezzed Defenders."""
+        notes = []
+        for prog in self.defenders():
+            if prog["defends"] == "shield" and not black_ice and amount > 0:
+                prog["derezzed"] = True
+                prog["rez"] = 0
+                notes.append("Shield eats it and derezzes itself")
+                amount = 0
+                break
+            if prog["defends"] == "soak4" and amount > 0:
+                amount = max(0, amount - 4)
+                notes.append("Armor soaks 4")
+        cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+        hp_max = (self.session.get("character") or {}).get("hp_max") or 0
+        current = cond.get("hp") if cond.get("hp") is not None else hp_max
+        cond["hp"] = current - amount
+        text = "%s for %d (%s)" % (source, amount, detail) if detail else "%s for %d" % (source, amount)
+        if notes:
+            text += " [" + ", ".join(notes) + "]"
+        return text + ". HP %s/%s." % (cond["hp"], hp_max)
+
+    def add_status(self, tag, text):
+        """Record an ongoing condition the netrunner is under."""
+        statuses = self.session.setdefault("statuses", [])
+        if not any(s["tag"] == tag for s in statuses):
+            statuses.append({"tag": tag, "text": text})
+        cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+        cond["status"] = "; ".join(s["text"] for s in statuses)
+
+    def clear_status(self, tag):
+        statuses = [s for s in self.session.get("statuses", []) if s["tag"] != tag]
+        self.session["statuses"] = statuses
+        cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+        cond["status"] = "; ".join(s["text"] for s in statuses)
+
+    def has_status(self, tag):
+        return any(s["tag"] == tag for s in self.session.get("statuses", []))
+
+    def apply_ice_effect(self, spec, name, target, rng=None):
+        """Run the named effect from the Black ICE table."""
+        rng = rng or random
+        kind = spec.get("effect")
+        rezzed = [p for p in self.session.get("rezzed", [])
+                  if not p.get("derezzed") and p.get("rez", 0) > 0]
+
+        if kind in ("brain",):
+            dmg, detail = roll_dice(spec.get("damage"), rng)
+            text = self.brain_damage(dmg, detail, "%s hits you" % name)
+            follow = spec.get("then")
+            if follow == "fire":
+                self.add_status("fire", "on fire -- 2 HP at the end of each turn")
+                text += " Your deck catches fire: 2 HP each turn until you put it out."
+            elif follow == "slow":
+                self.turn()["penalty_next"] = 1
+                text += " One fewer NET Action next turn."
+            elif follow == "pinned":
+                self.add_status("pinned", "pinned -- cannot go deeper or Jack Out safely")
+                text += " You cannot go deeper or Jack Out safely until the end of your next turn."
+            elif follow == "jack_out_unsafe":
+                self.session["run"] = None
+                text += " You are thrown out of the architecture, unsafely."
+            return text
+
+        if kind == "kill_program":
+            if not rezzed:
+                return "%s finds nothing of yours running." % name
+            victim = rng.choice(rezzed)
+            dmg, detail = roll_dice(spec.get("damage"), rng)
+            if dmg >= victim.get("rez", 0):
+                self.session["rezzed"] = [p for p in self.session["rezzed"]
+                                          if p["id"] != victim["id"]]
+                return "%s tears into %s for %d (%s) -- enough to derez it, so it is DESTROYED." % (
+                    name, victim["name"], dmg, detail)
+            victim["rez"] -= dmg
+            return "%s hits %s for %d (%s). %s has %d REZ left." % (
+                name, victim["name"], dmg, detail, victim["name"], victim["rez"])
+
+        if kind == "destroy_program":
+            if not rezzed:
+                return "%s finds nothing of yours to destroy." % name
+            victim = rng.choice(rezzed)
+            self.session["rezzed"] = [p for p in self.session["rezzed"] if p["id"] != victim["id"]]
+            return "%s destroys %s outright." % (name, victim["name"])
+
+        if kind == "derez_defender":
+            defenders = [p for p in rezzed if p.get("defends")]
+            note = ""
+            if defenders:
+                victim = rng.choice(defenders)
+                victim["derezzed"] = True
+                victim["rez"] = 0
+                note = "%s derezzes %s, then " % (name, victim["name"])
+            else:
+                note = "%s finds no Defender running, then " % name
+            dmg, detail = roll_dice(spec.get("damage"), rng)
+            return note + self.brain_damage(dmg, detail, "hits you")
+
+        if kind == "stat_drain":
+            drop, detail = roll_dice("1d6", rng)
+            stats = spec.get("stats", "a stat")
+            self.add_status("drain_" + stats.split(",")[0].strip().lower(),
+                            "%s down %d" % (stats, drop))
+            return "%s scrambles you: %s each down %d for the next hour (minimum 1)." % (
+                name, stats, drop)
+
+        if kind == "slide_penalty":
+            self.add_status("skunk", "Slide checks at -2")
+            return "%s marks you -- all your Slide checks are at -2 until it is derezzed." % name
+
+        dmg, detail = roll_dice(spec.get("damage"), rng)
+        if dmg:
+            return self.brain_damage(dmg, detail, "%s hits you" % name)
+        return "%s connects, but its effect is not one this program can apply." % name
 
     def _auto_slide(self, net, floor, beat, total, against, entry):
         if not beat:
@@ -2625,6 +2875,16 @@ class App:
                     if v == "Custom":
                         v = self.ui.prompt(head, "Custom floor type:", f["type"]) or f["type"]
                     f["type"] = v
+                    # Naming a piece of Black ICE fills in its stats from the book.
+                    spec = BLACK_ICE_STATS.get(v)
+                    if spec and self.ui.confirm(
+                            head, "Fill in %s's stats? (PER %d, SPD %d, ATK %d, DEF %d, REZ %d)"
+                            % (v, spec["per"], spec["spd"], spec["atk"], spec["def"], spec["rez"])):
+                        for key in ("per", "spd", "atk", "def", "rez"):
+                            f[key] = spec[key]
+                        f["damage"] = spec.get("damage", "")
+                        if not f.get("gm_notes"):
+                            f["gm_notes"] = "%s (%s)" % (v, spec["cls"])
                     self.touch()
             elif choice == "dv":
                 v = self.ui.prompt_int(head, "Difficulty Value (blank for none):", f.get("dv"), 0, 30)
