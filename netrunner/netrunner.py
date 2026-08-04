@@ -499,16 +499,15 @@ class UI:
 
 FALLBACK_ACTIONS = [
     {"name": "Pathfinder", "cost": "1 NET Action", "targets": "none",
-     "check": "Interface + 1d10 vs a rising DV, one rung per floor",
-     "dv": "easy for the floor just below you, harder for each floor under that",
-     "success": "You map as many floors as your roll reaches down the ladder -- "
-                "clear the first rung and you see the floor beneath you, clear "
-                "the second and you see the one under that, and so on.",
-     "failure": "You cannot get a fix on anything below you.",
-     "desc": "Scan ahead into the architecture. How far you see depends on how "
-             "well you roll: the floor at your feet is easy to read, and every "
-             "floor deeper is harder. This is how you avoid walking blind into "
-             "Black ICE."},
+     "check": "Interface + 1d10, read against the DV of each floor below",
+     "dv": "each floor's own DV -- you see down until one of them beats your roll",
+     "success": "You map the floors below you one after another and stop at the "
+                "first whose DV is higher than your check. You learn what is "
+                "there, but never how hard any of it is.",
+     "failure": "The floor right below you already beats your roll, so you see "
+                "nothing new.",
+     "desc": "Partially reveal the map of the architecture you are standing in. "
+             "How far you get depends on the roll and on what is in the way."},
     {"name": "Backdoor", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",
@@ -517,13 +516,14 @@ FALLBACK_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "none",
-     "check": "Interface + 1d10 vs the attacker's roll",
-     "dv": "the attacking Black ICE's roll, not a fixed number",
-     "success": "The attack misses you entirely.",
-     "failure": "The attack lands and its effect applies in full.",
-     "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
-             "fixed-DV, which is why the GM resolves it rather than the program."},
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "floor",
+     "check": "Interface + 1d10 vs the Black ICE's PER + 1d10",
+     "dv": "contested against the ICE's Perception",
+     "success": "You break away from that Black ICE and move to the floor above. "
+                "It goes back to lying in wait where you left it.",
+     "failure": "You do not get away. It is still on you.",
+     "desc": "Flee a single non-Demon Black ICE. Once per turn, and it will not "
+             "work on a Demon."},
     {"name": "Cloak", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs the Demon's PER",
      "dv": "the Demon's PER, or a rival Netrunner's roll",
@@ -553,17 +553,18 @@ FALLBACK_ACTIONS = [
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
-    {"name": "Download", "cost": "1 NET Action", "targets": "floor",
+    {"name": "Download", "cost": "--", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "A copy lands in your deck. It stays readable for the rest of "
                 "the session, whether or not you are still in the architecture.",
+     "note": "Saving a copy to your deck does not cost a NET Action.",
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
     {"name": "Attack", "cost": "1 NET Action", "targets": "floor",
-     "check": "Program ATK + 1d10 vs the target's DEF",
-     "dv": "the DEF of the Black ICE or Demon you are swinging at",
+     "check": "Interface + Program ATK + 1d10 vs the target's DEF + 1d10",
+     "dv": "contested -- the target rolls its DEF against you",
      "success": "The program's damage comes off the target's REZ. At 0 REZ it "
                 "is destroyed and the floor is clear.",
      "failure": "The attack misses and the target is untouched.",
@@ -571,8 +572,8 @@ FALLBACK_ACTIONS = [
              "Harder hitting than Zap, but you have to have run the program "
              "first and it can be derezzed out from under you."},
     {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
-     "check": "Interface + 1d10 vs the target's DEF",
-     "dv": "the target's DEF",
+     "check": "Interface + 1d10 vs the target's DEF + 1d10",
+     "dv": "contested -- the target rolls its DEF against you",
      "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
                 "the floor is clear.",
      "failure": "No damage -- the target is untouched and still in your way.",
@@ -586,6 +587,11 @@ FALLBACK_OPS = [
      "desc": "Drop to the next floor of the architecture. GM confirms."},
     {"name": "Move Up a Floor", "cost": "Movement", "check": "--",
      "desc": "Climb back toward the entry point."},
+    {"name": "Restore a Program", "cost": "2 NET Actions", "check": "--",
+     "success": "A derezzed program comes back to full REZ and works again.",
+     "failure": "--",
+     "desc": "Bring a derezzed program back up. Costs two NET Actions, so it is "
+             "rarely worth doing mid-fight unless you have nothing else running."},
     {"name": "Run a Program", "cost": "1 NET Action", "check": "--",
      "success": "The program is rezzed and stays up until it is derezzed or "
                 "destroyed. Attackers can then be swung with the Attack action.",
@@ -1232,11 +1238,14 @@ class Client:
         for p in rezzed:
             rez, top = p.get("rez", 0), p.get("rez_max", 0) or 1
             colour = C.GREEN if rez > top * 0.66 else C.YELLOW if rez > top * 0.33 else C.RED
+            if p.get("derezzed") or rez <= 0:
+                colour = C.RED
             lines.append(" " + C.CYAN + G["dot"] + " " + C.RESET +
                          pad(C.BOLD + p["name"] + C.RESET, 16) +
                          pad(C.GREY + p.get("cls", "") + C.RESET, 22) +
                          C.GREY + "ATK %-3s dmg %-7s" % (p.get("atk", 0), p.get("damage") or "-")
-                         + C.RESET + colour + "REZ %s/%s" % (rez, top) + C.RESET)
+                         + C.RESET + colour + "REZ %s/%s" % (rez, top) + C.RESET +
+                         (C.RED + "  DEREZZED" + C.RESET if p.get("derezzed") or rez <= 0 else ""))
         return lines
 
     def feed_pane(self, count):
@@ -1368,9 +1377,26 @@ class Client:
             self.ui.alert(self.ui.banner("RUN A PROGRAM"), ["Rezzing %s..." % pick], C.CYAN)
             return
 
+        if action["name"] == "Restore a Program":
+            dead = [p for p in (state.get("rezzed") or [])
+                    if p.get("derezzed") or p.get("rez", 0) <= 0]
+            if not dead:
+                self.ui.alert(self.ui.banner("RESTORE A PROGRAM"),
+                              ["Nothing of yours is derezzed."], C.GREY)
+                return
+            pick = self.ui.menu(self.ui.banner("RESTORE A PROGRAM", "2 NET Actions"),
+                                [(p["name"], p) for p in dead])
+            if pick is None:
+                return
+            self.conn.send({"type": "action", "action": action["name"], "target": pick["name"],
+                            "target_floor": None, "roll": None, "total": None,
+                            "program_id": pick["id"], "note": ""})
+            return
+
         # Attacking swings a rezzed program, and rolls on ITS attack value.
         if action["name"] == "Attack":
-            rezzed = [p for p in (state.get("rezzed") or []) if p.get("atk")]
+            rezzed = [p for p in (state.get("rezzed") or [])
+                      if p.get("atk") and not p.get("derezzed")]
             if not rezzed:
                 self.ui.alert(self.ui.banner("ATTACK"), [
                     "You have no Attacker running.",
@@ -1387,7 +1413,8 @@ class Client:
             if pick is None:
                 return
             extra = {"program_id": pick["id"], "program": pick["name"]}
-            interface = int(pick.get("atk") or 0)      # the program attacks, not you
+            # The book adds your Interface AND the program's ATK.
+            interface = interface + int(pick.get("atk") or 0)
 
         def act_head():
             lines = self.ui.banner(action["name"].upper(), action.get("check", ""))
@@ -1413,7 +1440,7 @@ class Client:
         if wants_roll:
             mode = self.ui.menu(act_head() + [" " + C.GREY + "on: " + C.RESET + target, ""], [
                 (C.GREEN + "Roll it" + C.RESET + C.GREY + "  %s %d + 1d10"
-                 % ("ATK" if action["name"] == "Attack" else "Interface", interface)
+                 % ("Interface + ATK" if action["name"] == "Attack" else "Interface", interface)
                  + C.RESET, "roll"),
                 ("Send without a roll (GM rolls)", "none"),
                 ("Enter a roll I made at the table", "manual"),
@@ -1425,11 +1452,11 @@ class Client:
                 total = die + interface
                 roll_total = total
                 roll_text = "%d  (%s %d + d10 %s)" % (
-                    total, "ATK" if action["name"] == "Attack" else "INT", interface, detail)
+                    total, "INT+ATK" if action["name"] == "Attack" else "INT", interface, detail)
                 self.ui.alert(act_head(), [
                     "d10 .......... %s" % detail,
-                    "%-12s . %d" % ("ATK" if action["name"] == "Attack" else "Interface",
-                                       interface),
+                    "%-12s . %d" % ("Interface+ATK" if action["name"] == "Attack"
+                                       else "Interface", interface),
                     "TOTAL ........ %d" % total,
                 ], C.GREEN if total >= 10 else C.YELLOW)
             elif mode == "manual":

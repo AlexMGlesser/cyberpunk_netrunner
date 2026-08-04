@@ -568,16 +568,15 @@ DIFFICULTIES = ["Basic", "Standard", "Uncommon", "Advanced"]
 
 NET_ACTIONS = [
     {"name": "Pathfinder", "cost": "1 NET Action", "targets": "none",
-     "check": "Interface + 1d10 vs a rising DV, one rung per floor",
-     "dv": "easy for the floor just below you, harder for each floor under that",
-     "success": "You map as many floors as your roll reaches down the ladder -- "
-                "clear the first rung and you see the floor beneath you, clear "
-                "the second and you see the one under that, and so on.",
-     "failure": "You cannot get a fix on anything below you.",
-     "desc": "Scan ahead into the architecture. How far you see depends on how "
-             "well you roll: the floor at your feet is easy to read, and every "
-             "floor deeper is harder. This is how you avoid walking blind into "
-             "Black ICE."},
+     "check": "Interface + 1d10, read against the DV of each floor below",
+     "dv": "each floor's own DV -- you see down until one of them beats your roll",
+     "success": "You map the floors below you one after another and stop at the "
+                "first whose DV is higher than your check. You learn what is "
+                "there, but never how hard any of it is.",
+     "failure": "The floor right below you already beats your roll, so you see "
+                "nothing new.",
+     "desc": "Partially reveal the map of the architecture you are standing in. "
+             "How far you get depends on the roll and on what is in the way."},
     {"name": "Backdoor", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs Password DV",
      "dv": "DV of the Password floor",
@@ -586,13 +585,14 @@ NET_ACTIONS = [
                 "decides whether something wakes up.",
      "desc": "Force a Password floor. Only Password floors can be Backdoored; "
              "other floor types need their own action."},
-    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "none",
-     "check": "Interface + 1d10 vs the attacker's roll",
-     "dv": "the attacking Black ICE's roll, not a fixed number",
-     "success": "The attack misses you entirely.",
-     "failure": "The attack lands and its effect applies in full.",
-     "desc": "Dodge an incoming attack from Black ICE. Contested rather than "
-             "fixed-DV, which is why the GM resolves it rather than the program."},
+    {"name": "Slide", "cost": "1 NET Action", "per_turn": 1, "targets": "floor",
+     "check": "Interface + 1d10 vs the Black ICE's PER + 1d10",
+     "dv": "contested against the ICE's Perception",
+     "success": "You break away from that Black ICE and move to the floor above. "
+                "It goes back to lying in wait where you left it.",
+     "failure": "You do not get away. It is still on you.",
+     "desc": "Flee a single non-Demon Black ICE. Once per turn, and it will not "
+             "work on a Demon."},
     {"name": "Cloak", "cost": "1 NET Action", "targets": "none",
      "check": "Interface + 1d10 vs the Demon's PER",
      "dv": "the Demon's PER, or a rival Netrunner's roll",
@@ -622,17 +622,18 @@ NET_ACTIONS = [
      "failure": "The install fails and the target is untouched.",
      "desc": "Plant a virus on a File or a Control Node. What the virus does is "
              "set when you write it, not when you install it."},
-    {"name": "Download", "cost": "1 NET Action", "targets": "floor",
+    {"name": "Download", "cost": "--", "targets": "floor",
      "check": "Interface + 1d10 vs File DV",
      "dv": "DV of the File",
      "success": "A copy lands in your deck. It stays readable for the rest of "
                 "the session, whether or not you are still in the architecture.",
+     "note": "Saving a copy to your deck does not cost a NET Action.",
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
     {"name": "Attack", "cost": "1 NET Action", "targets": "floor",
-     "check": "Program ATK + 1d10 vs the target's DEF",
-     "dv": "the DEF of the Black ICE or Demon you are swinging at",
+     "check": "Interface + Program ATK + 1d10 vs the target's DEF + 1d10",
+     "dv": "contested -- the target rolls its DEF against you",
      "success": "The program's damage comes off the target's REZ. At 0 REZ it "
                 "is destroyed and the floor is clear.",
      "failure": "The attack misses and the target is untouched.",
@@ -640,8 +641,8 @@ NET_ACTIONS = [
              "Harder hitting than Zap, but you have to have run the program "
              "first and it can be derezzed out from under you."},
     {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
-     "check": "Interface + 1d10 vs the target's DEF",
-     "dv": "the target's DEF",
+     "check": "Interface + 1d10 vs the target's DEF + 1d10",
+     "dv": "contested -- the target rolls its DEF against you",
      "success": "1d6 damage to the target's REZ. At 0 REZ it is destroyed and "
                 "the floor is clear.",
      "failure": "No damage -- the target is untouched and still in your way.",
@@ -655,6 +656,11 @@ OPERATIONS = [
      "desc": "Drop to the next floor of the architecture. GM confirms."},
     {"name": "Move Up a Floor", "cost": "Movement", "check": "--",
      "desc": "Climb back toward the entry point."},
+    {"name": "Restore a Program", "cost": "2 NET Actions", "check": "--",
+     "success": "A derezzed program comes back to full REZ and works again.",
+     "failure": "--",
+     "desc": "Bring a derezzed program back up. Costs two NET Actions, so it is "
+             "rarely worth doing mid-fight unless you have nothing else running."},
     {"name": "Run a Program", "cost": "1 NET Action", "check": "--",
      "success": "The program is rezzed and stays up until it is derezzed or "
                 "destroyed. Attackers can then be swung with the Attack action.",
@@ -743,7 +749,9 @@ def new_floor(number):
         "dv": 6,
         "def": 0,          # Black ICE / Demons: what a Zap has to beat
         "rez": 0,          # Black ICE / Demons: knock this to 0 and it dies
-        "atk": 0,          # what it rolls when it attacks
+        "atk": 0,          # added to its d10 when it attacks
+        "per": 0,          # how hard it is to Slide away from
+        "spd": 0,          # the free-hit check when you first walk into it
         "damage": "",      # what it does on a hit, e.g. "3d6"
         "label": "",
         "content": "",     # File floors: what the netrunner walks away with
@@ -954,6 +962,8 @@ def generate_architecture(difficulty, rng=None):
     defs = _spread(cfg["def"][0], cfg["def"][1], ice_count, rng)
     rezzes = _spread(cfg["rez"][0], cfg["rez"][1], ice_count, rng)
     atks = _spread(cfg["atk"][0], cfg["atk"][1], ice_count, rng)
+    pers = _spread(cfg["atk"][0], cfg["atk"][1], ice_count, rng)
+    spds = _spread(cfg["atk"][0], cfg["atk"][1], ice_count, rng)
 
     files = rng.sample(GEN_FILES, min(len(GEN_FILES), max(1, kinds.count("File"))))
     nodes = rng.sample(GEN_NODES, min(len(GEN_NODES), max(1, kinds.count("Control Node"))))
@@ -972,6 +982,8 @@ def generate_architecture(difficulty, rng=None):
             floor["def"] = defs[ice_i] if ice_i < len(defs) else cfg["def"][0]
             floor["rez"] = rezzes[ice_i] if ice_i < len(rezzes) else cfg["rez"][0]
             floor["atk"] = atks[ice_i] if ice_i < len(atks) else cfg["atk"][0]
+            floor["per"] = pers[ice_i] if ice_i < len(pers) else cfg["atk"][0]
+            floor["spd"] = spds[ice_i] if ice_i < len(spds) else cfg["atk"][0]
             floor["damage"] = rng.choice(cfg["damage"])
             ice_i += 1
         net["floors"].append(floor)
@@ -1468,6 +1480,20 @@ class App:
         if action in ("Move Down a Floor", "Move Up a Floor"):
             return self._auto_move(net, run, down=action.startswith("Move Down"))
 
+        if action == "Restore a Program":
+            prog = self.rezzed_by_id((entry or {}).get("program_id"))
+            if prog is None:
+                text = "That program is not running."
+            elif not prog.get("derezzed") and prog.get("rez", 0) > 0:
+                text = "%s does not need restoring." % prog["name"]
+            else:
+                prog["rez"] = prog.get("rez_max", 0)
+                prog["derezzed"] = False
+                text = "%s is back to full REZ (%d)." % (prog["name"], prog["rez"])
+            self.feed(text, "sys")
+            self.log("AUTO: " + text)
+            return text
+
         # Rezzing a program targets nothing and rolls nothing.
         if action == "Run a Program":
             text = self._auto_rez(net, None, True, 0, 0, entry)
@@ -1492,34 +1518,44 @@ class App:
             return None            # they asked us to roll for them
 
         # Zap is measured against DEF, everything else against the floor DV.
-        if action in ("Zap", "Attack"):
-            # Swinging at something that is not ICE needs no roll and no GM --
-            # there is simply nothing there to hit.
+        contest = None
+        if action in ("Zap", "Attack", "Slide"):
             if floor.get("type") not in BLACK_ICE and floor.get("type") not in DEMONS:
-                text = "%s -- there is nothing on floor %d to attack." % (action, floor["n"])
+                what = "attack" if action != "Slide" else "slide away from"
+                text = "%s -- there is nothing on floor %d to %s." % (action, floor["n"], what)
                 self.feed(text, "sys")
                 self.log("AUTO: " + text)
                 return text
-            against = floor.get("def")
+            if action == "Slide" and floor["type"] in DEMONS:
+                text = "Slide -- you cannot slide away from a Demon."
+                self.feed(text, "alert")
+                return text
+            # Attacks and Slides are contested: the target rolls too.
+            stat = "per" if action == "Slide" else "def"
+            base = int(floor.get(stat) or 0)
+            die = random.randint(1, 10)
+            against = base + die
+            contest = "%s %d + d10 %d = %d" % (stat.upper(), base, die, against)
         elif action == "Pathfinder":
-            against = self.pathfinder_dv(0)     # its own ladder, not the floor DV
+            below = [f for f in net["floors"] if f["n"] > floor["n"]]
+            against = int(below[0].get("dv") or 0) if below else 0
         else:
             against = floor.get("dv")
-        if not against:
-            if action == "Download":
-                against = 0        # no lock on it -- copying just works
-            else:
-                return None        # nothing recorded to beat, so ask the GM
+        if not against and action not in ("Download", "Pathfinder", "Zap", "Attack", "Slide"):
+            return None        # nothing recorded to beat, so ask the GM
+        against = against or 0
 
         beat = total >= against
         verdict = "SUCCESS" if beat else "FAILURE"
-        # Having actually tested a floor, they now know what it took.
-        if action != "Pathfinder" and against:
+        # Having actually tested a floor, they now know what it took. Contested
+        # rolls teach nothing -- the number moved.
+        if action not in ("Pathfinder", "Zap", "Attack", "Slide") and against:
             floor["dv_known"] = True
         detail = handler(self, net, floor, beat, total, against, entry)
-        label = "DEF" if action == "Zap" else "DV"
-        text = "%s vs %s %d -- rolled %d -- %s. %s" % (
-            action, label, against, total, verdict, detail)
+        if contest:
+            text = "%s -- rolled %d vs %s -- %s. %s" % (action, total, contest, verdict, detail)
+        else:
+            text = "%s vs DV %d -- rolled %d -- %s. %s" % (action, against, total, verdict, detail)
         self.feed(text, "gm" if beat else "alert")
         self.log("AUTO: " + text)
         return text
@@ -1603,7 +1639,34 @@ class App:
             run["floor"], nxt["type"] if nxt else "empty")
         self.feed(text, "sys")
         self.log("AUTO: netrunner moved down to floor %d." % run["floor"])
-        return text
+        encounter = self.encounter_check(nxt)
+        return text + (("  " + encounter) if encounter else "")
+
+    def encounter_check(self, floor):
+        """Walking into live Black ICE: its SPD against your Interface.
+
+        If it wins it gets its effect in straight away, before anyone acts.
+        """
+        if not floor or floor.get("type") not in BLACK_ICE | DEMONS:
+            return None
+        if floor.get("state", "Intact") in CLEARED_STATES:
+            return None
+        spd = int(floor.get("spd") or 0)
+        if not spd:
+            return None
+        interface = int((self.session.get("character") or {}).get("interface", 0) or 0)
+        mine = interface + random.randint(1, 10)
+        theirs = spd + random.randint(1, 10)
+        if mine >= theirs:
+            text = "You spot %s before it moves (%d vs %d)." % (floor["type"], mine, theirs)
+            self.feed(text, "sys")
+            return text
+        text = "%s was lying in wait and gets the jump on you (%d vs %d)." % (
+            floor["type"], theirs, mine)
+        self.feed(text, "alert")
+        self.log("ICE: " + text)
+        hit = self.ice_attacks(floor, None)
+        return text + " " + hit
 
     def _auto_download(self, net, floor, beat, total, against, entry):
         if floor.get("type") != "File":
@@ -1647,6 +1710,7 @@ class App:
             "atk": int(spec.get("atk") or 0),
             "def": int(spec.get("def") or 0),
             "rez": rez, "rez_max": rez,
+            "derezzed": False,
             "damage": spec.get("damage") or "",
         })
         return "%s is up and running (REZ %d)." % (spec.get("name", "?"), rez)
@@ -1656,6 +1720,8 @@ class App:
         prog = self.rezzed_by_id((entry or {}).get("program_id"))
         if prog is None:
             return "That program is not running."
+        if prog.get("derezzed") or prog.get("rez", 0) <= 0:
+            return "%s is derezzed and cannot do anything until it is restored." % prog["name"]
         if floor.get("type") not in BLACK_ICE and floor.get("type") not in DEMONS:
             return "There is nothing here to attack."
         if not beat:
@@ -1684,9 +1750,9 @@ class App:
         name = floor.get("type", "Black ICE")
 
         if target is None:
-            interface = self.actions_per_turn() and (
-                self.session.get("character") or {}).get("interface", 0) or 0
-            defence = int(interface) + rng.randint(1, 10)
+            # The netrunner defends with Interface + 1d10.
+            interface = int((self.session.get("character") or {}).get("interface", 0) or 0)
+            defence = interface + rng.randint(1, 10)
             who = "you"
         else:
             defence = int(target.get("def") or 0) + rng.randint(1, 10)
@@ -1716,14 +1782,26 @@ class App:
             target["rez"] = max(0, target.get("rez", 0) - damage)
             text = "%s. It hits %s for %d (%s)." % (head, target["name"], damage, detail)
             if target["rez"] <= 0:
-                self.session["rezzed"] = [
-                    p for p in self.session.get("rezzed", []) if p["id"] != target["id"]]
-                text += " %s is derezzed." % target["name"]
+                # Derezzed is not destroyed: the program is still running, just
+                # useless, until someone spends the actions to bring it back.
+                target["derezzed"] = True
+                text += " %s is DEREZZED -- 2 NET Actions to bring it back." % target["name"]
             else:
                 text += " %s has %d REZ left." % (target["name"], target["rez"])
         self.feed(text, "alert")
         self.log("ICE: " + text)
         return text
+
+    def _auto_slide(self, net, floor, beat, total, against, entry):
+        if not beat:
+            return "%s stays on you." % floor.get("type", "It")
+        run = self.session.get("run")
+        if run and run.get("floor", 1) > 1:
+            run["floor"] = run["floor"] - 1
+            self.reveal_current_floor()
+            return "You break away from %s and pull back to floor %d." % (
+                floor.get("type", "it"), run["floor"])
+        return "You break away from %s." % floor.get("type", "it")
 
     def _auto_zap(self, net, floor, beat, total, against, entry):
         if not beat:
@@ -1756,25 +1834,29 @@ class App:
         return base + step * depth
 
     def _auto_pathfinder(self, net, floor, beat, total, against, entry):
+        """Read the map downward, stopping at the first floor you cannot see past.
+
+        Straight from the book: you learn what is on each floor below until you
+        reach one whose DV is higher than your check. You never learn the DVs
+        themselves, so dv_known is deliberately left alone.
+        """
         below = [f for f in net["floors"] if f["n"] > floor["n"]]
         if not below:
             return "There is nothing below you to scan."
         reached = []
-        for depth, f in enumerate(below):
-            if total < self.pathfinder_dv(depth):
+        blocked = None
+        for f in below:
+            if total < int(f.get("dv") or 0):
+                blocked = f
                 break
-            # A scan tells you what is down there, not how hard it will be --
-            # dv_known is deliberately left alone.
             f["revealed"] = True
             reached.append(f)
         if not reached:
-            return "You cannot get a fix on anything -- floor %d alone needed %d." % (
-                below[0]["n"], self.pathfinder_dv(0))
+            return "Floor %d is already past what you can read." % below[0]["n"]
         names = ", ".join("floor %d is %s" % (f["n"], f["type"]) for f in reached)
         text = "You map %d floor(s) down: %s." % (len(reached), names)
-        if len(reached) < len(below):
-            text += " Seeing floor %d would have needed %d." % (
-                below[len(reached)]["n"], self.pathfinder_dv(len(reached)))
+        if blocked is not None:
+            text += " Floor %d is beyond your read." % blocked["n"]
         return text
 
     def _auto_eyedee(self, net, floor, beat, total, against, entry):
@@ -2498,8 +2580,14 @@ class App:
                                          C.GREY + "   drops to 0 and it dies" + C.RESET
                                          if is_ice else ""), "rez"),
                 ("ATK           %s%s" % (f.get("atk") or "--",
-                                         C.GREY + "   what it rolls when it attacks" + C.RESET
+                                         C.GREY + "   added to its d10 when it attacks" + C.RESET
                                          if is_ice else ""), "atk"),
+                ("PER           %s%s" % (f.get("per") or "--",
+                                         C.GREY + "   how hard it is to Slide away from" + C.RESET
+                                         if is_ice else ""), "per"),
+                ("SPD           %s%s" % (f.get("spd") or "--",
+                                         C.GREY + "   free hit if it beats them on arrival" + C.RESET
+                                         if is_ice else ""), "spd"),
                 ("Damage        %s%s" % (f.get("damage") or "--",
                                          C.GREY + "   e.g. 3d6, rolled on a hit" + C.RESET
                                          if is_ice else ""), "damage"),
@@ -2548,9 +2636,11 @@ class App:
                 if v is not None:
                     f["damage"] = v.strip()
                     self.touch()
-            elif choice == "atk":
-                f["atk"] = self.ui.prompt_int(head, "ATK -- added to its d10 when it attacks:",
-                                              f.get("atk") or 0, 0, 30)
+            elif choice in ("atk", "per", "spd"):
+                labels = {"atk": "ATK -- added to its d10 when it attacks:",
+                          "per": "PER -- what a Slide has to beat:",
+                          "spd": "SPD -- rolled against Interface when they walk in:"}
+                f[choice] = self.ui.prompt_int(head, labels[choice], f.get(choice) or 0, 0, 30)
                 self.touch()
             elif choice in ("def", "rez"):
                 label = ("DEF -- a Zap has to beat this:" if choice == "def"
@@ -2921,9 +3011,10 @@ class App:
                            "%s/%s" % (hp, hp_max) + C.GREY + "   INT " + C.RESET +
                            str(ch.get("interface", "-")))
                 if here:
-                    bits = "DEF %s  REZ %s  ATK %s  DMG %s" % (
-                        here.get("def") or "-", here.get("rez") or "-",
-                        here.get("atk") or "-", here.get("damage") or "-")
+                    bits = "PER %s  SPD %s  ATK %s  DEF %s  REZ %s  DMG %s" % (
+                        here.get("per") or "-", here.get("spd") or "-",
+                        here.get("atk") or "-", here.get("def") or "-",
+                        here.get("rez") or "-", here.get("damage") or "-")
                     out.append(" " + C.RED + "on this floor: " + here["type"] + C.RESET +
                                C.GREY + "   " + bits + C.RESET)
                 out.append("")
@@ -3404,7 +3495,9 @@ AUTO_ACTIONS = {
     "Virus": App._auto_virus,
     "Zap": App._auto_zap,
     "Attack": App._auto_attack,
+    "Slide": App._auto_slide,
     "Run a Program": App._auto_rez,
+    "Restore a Program": App._auto_rez,   # handled before dispatch; listed for cost lookup
     "Download": App._auto_download,
 }
 

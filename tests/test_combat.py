@@ -82,33 +82,33 @@ act(app, "Run a Program", program="Sword")
 sword = app.session["rezzed"][0]
 ice = net["floors"][1]
 before = ice["rez"]
-r = act(app, "Attack", total=3, floor=2, program_id=sword["id"])
+r = act(app, "Attack", total=0, floor=2, program_id=sword["id"])
 check("an attack under the target's DEF misses", ice["rez"] == before, (r, ice["rez"]))
 check("the miss says so", "miss" in r.lower(), r)
-r = act(app, "Attack", total=12, floor=2, program_id=sword["id"])
+r = act(app, "Attack", total=99, floor=2, program_id=sword["id"])
 check("an attack over DEF takes REZ off", ice["rez"] < before, (r, ice["rez"]))
 check("the damage roll is shown", "3d6" in r, r)
 while ice["rez"] > 0:
-    act(app, "Attack", total=20, floor=2, program_id=sword["id"])
+    act(app, "Attack", total=99, floor=2, program_id=sword["id"])
 check("dropping REZ to 0 destroys the ICE", ice["state"] == "Destroyed" and ice["rez"] == 0, ice)
 check("and the floor is reported clear", True)
 app, net = bench()
-r = act(app, "Attack", total=20, floor=2, program_id="nope")
+r = act(app, "Attack", total=99, floor=2, program_id="nope")
 check("attacking with a program that is not running is refused",
       net["floors"][1]["rez"] == 12, r)
 app, net = bench()
 act(app, "Run a Program", program="Sword")
-r = act(app, "Attack", total=20, floor=1, program_id=app.session["rezzed"][0]["id"])
+r = act(app, "Attack", total=99, floor=1, program_id=app.session["rezzed"][0]["id"])
 check("there is nothing to attack on a Password floor", r and "nothing on floor" in r.lower(), r)
 app, net = bench()
 act(app, "Run a Program", program="Armor")          # no damage dice
-r = act(app, "Attack", total=20, floor=2, program_id=app.session["rezzed"][0]["id"])
+r = act(app, "Attack", total=99, floor=2, program_id=app.session["rezzed"][0]["id"])
 check("a program with no damage set defers to the GM", "call it yourself" in r, r)
 
 # ---------- Zap still works alongside ----------
 app, net = bench()
 ice = net["floors"][1]; before = ice["rez"]
-r = act(app, "Zap", total=12, floor=2)
+r = act(app, "Zap", total=99, floor=2)
 check("Zap still damages ICE", ice["rez"] < before, r)
 check("Zap uses 1d6, not the program dice", before - ice["rez"] <= 6, (before, ice["rez"]))
 
@@ -134,8 +134,15 @@ check("ICE can attack a program instead of the netrunner", armor["rez"] < 9, (r,
 check("the netrunner takes nothing in that case", app.session["condition"]["hp"] == 30)
 armor["rez"] = 1
 r = app.ice_attacks(net["floors"][1], armor, Fixed([10, 1, 6, 6, 6]))
-check("a program at 0 REZ is derezzed", app.session["rezzed"] == [], (r, app.session["rezzed"]))
+check("a program at 0 REZ is derezzed, not deleted",
+      len(app.session["rezzed"]) == 1 and armor["derezzed"] is True, (r, app.session["rezzed"]))
 check("the derez is announced", "derezzed" in r.lower(), r)
+check("the book's 2-action restore cost is quoted", "2 NET Actions" in r, r)
+r = act(app, "Restore a Program", program_id=armor["id"])
+check("restoring brings it back to full REZ",
+      armor["rez"] == armor["rez_max"] and not armor["derezzed"], (r, armor))
+check("Restore costs two NET Actions",
+      A.App.action_cost(app.catalog_entry("Restore a Program")) == 2)
 app, net = bench()
 noguns = dict(net["floors"][1]); noguns["damage"] = ""
 r = app.ice_attacks(noguns, None, Fixed([10, 1]))
@@ -160,6 +167,8 @@ check("Attack is on the action budget",
       A.App.action_cost(app.catalog_entry("Attack")) == 1)
 check("Run a Program is on the budget",
       A.App.action_cost(app.catalog_entry("Run a Program")) == 1)
+check("saving a file copy is NOT a NET Action, per the book",
+      A.App.action_cost(app.catalog_entry("Download")) == 0)
 app.spend_action("Attack"); app.spend_action("Attack")
 ok, why = app.can_take("Attack")
 check("attacking with no actions left is refused", not ok, why)
@@ -190,7 +199,7 @@ check("rezzing works over the wire", len(app.session["rezzed"]) == 1, app.sessio
 pid = app.session["rezzed"][0]["id"]
 before = net["floors"][1]["rez"]
 send({"type": "action", "action": "Attack", "target": "Floor 2", "target_floor": 2,
-      "roll": "18", "total": 18, "program_id": pid, "note": ""})
+      "roll": "99", "total": 99, "program_id": pid, "note": ""})
 time.sleep(0.4); msgs = drain()
 check("attacking works over the wire", net["floors"][1]["rez"] < before, net["floors"][1]["rez"])
 check("it never queued for the GM", app.session["pending"] == [], app.session["pending"])

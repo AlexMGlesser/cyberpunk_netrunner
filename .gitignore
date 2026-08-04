@@ -12,3 +12,9 @@ admin/library/*.json
 
 # Your own rules wording is yours
 admin/rules.json
+
+# The rulebook stays on your machine. Never commit or push it -- your own copy
+# is your business, but a copy in a repo is distribution.
+*.pdf
+*.epub
+Cyberpunk_Red.pdf

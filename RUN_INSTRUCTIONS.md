@@ -102,10 +102,11 @@ Reveal a floor and it appears on their screen instantly.
 | Virus | floor marked **Virused** |
 | Zap | 1d6 off the target's REZ; at 0 it's **Destroyed** and the floor is clear |
 | Attack | a rezzed program's damage off the target's REZ |
-| Run a Program | the program is rezzed and stays up until derezzed or destroyed |
+| Slide | they break away from the ICE and pull back a floor |
+| Run a Program | the program is rezzed and stays up until derezzed |
 | Download | a copy of the File lands on their deck for the rest of the session |
 
-**Movement is automatic too**, and always **one floor at a time**. Move Down just happens, unless something is actually in the way:
+**Movement costs no NET Action** (nor does saving a file copy), and is always **one floor at a time**. Move Down just happens, unless something is actually in the way:
 
 - an **intact Password** — they're told to Backdoor it
 - **live Black ICE or a Demon** — they're told to kill it or get past it
@@ -115,7 +116,7 @@ A floor counts as dealt with once it's Defeated, Controlled, Virused or Destroye
 
 You can still put them anywhere with **Set floor directly** in Run control — that's a GM override and ignores the blocking rules.
 
-Only three things still come to you, because a number comparison can't settle them: **Slide** and **Cloak** (contested against a roll only you know), and anything targeting a floor where you left the DV blank. Those land in **Pending NET Actions** — pick one, choose Success / Failure / Partial, type what happens, and it appears in their feed.
+**Cloak** still comes to you, since it's contested against something only you know, as does anything targeting a floor where you left the DV blank. Those land in **Pending NET Actions** — pick one, choose Success / Failure / Partial, type what happens, and it appears in their feed.
 
 Turn all of it off with **Rules & difficulty → Auto-resolve rolls** on the session menu if you'd rather call every action yourself.
 
@@ -129,23 +130,15 @@ There's also **Disconnect the netrunner entirely** if you want them off the sess
 
 How far they see depends on how well they roll. The floor directly beneath them is easy to read, and every floor deeper is harder:
 
-| Roll at least | You map |
-| --- | --- |
-| 6 | 1 floor down |
-| 10 | 2 floors down |
-| 14 | 3 floors down |
-| 18 | 4 floors down |
-| 22 | 5 floors down |
+They roll **Interface + 1d10** once, then read down the architecture floor by floor, learning what's on each one until they reach a floor whose **DV is higher than the roll**. That floor and everything under it stays dark.
 
-A roll under 6 finds nothing. The result tells them what they mapped and what the next rung would have cost, so a near miss reads as a near miss.
+So a DV6 floor, a DV9 floor and then a DV12 floor, on a roll of 10, maps the first two and stops. The result names what they found and which floor blocked the read.
 
 **A scan reveals what's down there, not how hard it is.** They learn each floor's *type* — Password, Killer, File — but not its DV. That shows as `DV ?` on their map.
 
 They learn a floor's DV by **attempting** it: any action rolled against a floor teaches them what it took, pass or fail. You can also hand it over up front with **Tell them the DV** in the floor editor, or take it back later. Your own floor list marks a DV they haven't learned with a `?`.
 
-Scanning always starts from the floor they're standing on, stops at the bottom of the architecture, and needs no DV on the floors themselves — the ladder is its own difficulty.
-
-**Rules & difficulty** on the session menu retunes it: change the first rung, change how much each floor deeper adds, or restore the defaults. Set the step to `0` and any successful scan maps the whole way down. The screen previews the resulting ladder against the architecture they're actually in, so you can see what a given roll would reveal.
+Scanning always starts from the floor they're standing on and stops at the bottom of the architecture. This is why setting a DV on every floor matters — Pathfinder reads against them.
 
 ---
 
@@ -153,11 +146,15 @@ Scanning always starts from the floor they're standing on, stops at the bottom o
 
 **Their side.** Programs on the netrunner's sheet carry ATK, DEF, REZ and a **damage** die (`3d6`). They rez one with **Run a Program**, and a rezzed program shows in a panel on their run screen with its current REZ.
 
-- **Attack** swings a rezzed Attacker: *program ATK + 1d10 vs the target's DEF*. On a hit, its damage dice come off the target's REZ; at 0 the ICE is destroyed and the floor is clear.
-- **Zap** is unchanged — *Interface + 1d10 vs DEF*, 1d6 damage. Always available, weaker, needs no program.
-- Swinging at something that isn't ICE just tells them there's nothing there rather than bothering you.
+- **Attack** swings a rezzed Attacker: *Interface + program ATK + 1d10* against the target's *DEF + 1d10*. On a hit its damage dice come off the target's REZ.
+- **Zap** needs no program: *Interface + 1d10* against *DEF + 1d10*, for 1d6.
+- **Slide** flees a single non-Demon Black ICE: *Interface + 1d10* against its *PER + 1d10*. On a success they break away and pull back a floor. Once per turn, and it won't work on a Demon.
+- A program reduced to **0 REZ is derezzed, not destroyed** — it stays on the deck, useless, until they spend **2 NET Actions** on **Restore a Program**.
+- Swinging at something that isn't ICE just tells them so rather than bothering you.
 
-**Your side.** Black ICE and Demons get **ATK** and a **damage** die in the floor editor alongside DEF and REZ. **NET combat**, on the session menu and on Run control, is where you use them:
+**Your side.** Black ICE and Demons carry the full five stats in the floor editor — **PER** (what a Slide must beat), **SPD** (the free hit when they walk in), **ATK**, **DEF** and **REZ** — plus a **damage** die.
+
+Give a piece of ICE an **SPD** and it gets an ambush check the moment they arrive on its floor: *its SPD + 1d10* against their *Interface + 1d10*. If it wins, it lands its effect immediately, before anyone acts. Leave SPD at 0 and it simply waits. **NET combat**, on the session menu and on Run control, is where you use them:
 
 - **`<ICE>` attacks the netrunner** — rolls *ICE ATK + 1d10* against their *Interface + 1d10*, and on a hit rolls the damage dice straight off their HP
 - **`<ICE>` attacks `<program>`** — same roll against the program's DEF, damage off its REZ; at 0 it's derezzed
@@ -328,6 +325,7 @@ netrunner.py  [--host ADDRESS] [--port 7717] [--ascii]
 python3 tests/test_selfcontained.py   # proves both scripts need nothing but Python
 python3 tests/test_generate.py        # the architecture generator's structure rules
 python3 tests/test_combat.py          # dice, programs, ICE attacks, damage and REZ
+python3 tests/test_rulebook.py       # the mechanics against how the rules actually work
 ```
 
 `test_selfcontained.py` guards the promise at the top of this file: every import is standard library, neither script imports the other, platform-only modules stay behind their guard, nothing needs newer than Python 3.7, and either script works alone in an empty folder with no `rules.json`, `saves/` or `library/` present.
