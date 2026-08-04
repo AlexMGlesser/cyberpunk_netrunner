@@ -599,6 +599,12 @@ FALLBACK_OPS = [
      "desc": "Rez an Attacker, Defender or Booster from your deck. A rezzed "
              "program has its own REZ, which anti-program ICE will go after "
              "instead of you."},
+    {"name": "Put Out the Fire", "cost": "Meat Action", "check": "--",
+     "success": "You beat the flames out and stop taking 2 HP a turn.",
+     "failure": "--",
+     "desc": "Your deck and clothes are burning. Putting yourself out is a Meat "
+             "Action, so it costs nothing from your NET Actions -- but it is a "
+             "thing your body does, so you are not netrunning while you do it."},
     {"name": "Speak to the GM", "cost": "--", "check": "--",
      "desc": "Describe something your Netrunner does that isn't on this list."},
     {"name": "Jack Out", "cost": "--", "check": "--",
@@ -1261,6 +1267,18 @@ class Client:
             lines.append("   " + C.GREY + G["corner"] + " deeper floors unknown -- run Pathfinder" + C.RESET)
         return lines
 
+    def condition_pane(self):
+        statuses = (self.snap() or {}).get("statuses") or []
+        if not statuses:
+            return []
+        lines = [self.ui.rule("ON YOU")]
+        for s in statuses:
+            line = " " + C.RED + G["dot"] + " " + s["text"] + C.RESET
+            if s.get("ends"):
+                line += C.GREY + "   until " + s["ends"] + C.RESET
+            lines.append(line)
+        return lines
+
     def rezzed_pane(self):
         rezzed = (self.snap() or {}).get("rezzed") or []
         if not rezzed:
@@ -1342,7 +1360,8 @@ class Client:
             ]
 
             choice = self.ui.menu(head, items, index=keep,
-                                  body=lambda: self.rezzed_pane() + self.feed_pane(5),
+                                  body=lambda: (self.condition_pane() + self.rezzed_pane()
+                                                + self.feed_pane(4)),
                                   watch=lambda: self.version)
             keep = self.ui.last_index
             if choice is REFRESH:
@@ -1406,6 +1425,11 @@ class Client:
                             "target_floor": None, "roll": None, "total": None,
                             "program": pick, "note": ""})
             self.ui.alert(self.ui.banner("RUN A PROGRAM"), ["Rezzing %s..." % pick], C.CYAN)
+            return
+
+        if action["name"] == "Put Out the Fire":
+            self.conn.send({"type": "action", "action": action["name"], "target": "",
+                            "target_floor": None, "roll": None, "total": None, "note": ""})
             return
 
         if action["name"] == "Restore a Program":

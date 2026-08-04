@@ -349,5 +349,83 @@ check("Banhammer is the other way round",
 check("the stock library carries all 15 programs", len(A.PROGRAM_LIBRARY) == 15)
 check("the player has the same library", len(N.PROGRAM_LIBRARY) == 15)
 
+
+# ==========================================================================
+# Conditions can be taken off again
+# ==========================================================================
+print()
+import io, contextlib
+
+def screen(app, fn, keys):
+    it = iter(keys); A.read_key = lambda timeout=None: next(it, "esc")
+    A.UI.draw = lambda self, lines: None
+    with contextlib.redirect_stdout(io.StringIO()): fn()
+    return list(it)
+
+# --- fire: the player can put themselves out ------------------------------
+app, net, f = ice_bench("Hellhound")
+app.ice_attacks(f, None, Rig())
+check("the netrunner is on fire", app.has_status("fire"))
+check("the fire says how it ends",
+      "Meat Action" in [s.get("ends", "") for s in app.session["statuses"]][0],
+      app.session["statuses"])
+r = act(app, "Put Out the Fire")
+check("the player can put themselves out", not app.has_status("fire"), r)
+check("and is told", "burning stops" in r.lower(), r)
+hp = app.session["condition"]["hp"]
+app.start_round()
+check("the burning really has stopped", app.session["condition"]["hp"] == hp,
+      app.session["condition"])
+check("putting yourself out is a Meat Action, not a NET Action",
+      A.App.action_cost(app.catalog_entry("Put Out the Fire")) == 0)
+app, net = bench()
+r = act(app, "Put Out the Fire")
+check("putting out a fire you are not in says so", "not on fire" in r.lower(), r)
+
+# --- fire: the GM can put it out too --------------------------------------
+app, net, f = ice_bench("Hellhound")
+app.ice_attacks(f, None, Rig()); app.server = None
+left = screen(app, app.screen_conditions, list("Put the fire out") + ["enter", "esc"])
+check("the GM can put the fire out from the conditions screen", not app.has_status("fire"))
+check("the conditions screen stays in sync", left == [], left)
+
+# --- every condition can be cleared ---------------------------------------
+for kind, tag in (("Liche", "drain_int"), ("Scorpion", "drain_move"),
+                  ("Skunk", "skunk"), ("Kraken", "pinned")):
+    app, net, f = ice_bench(kind)
+    app.ice_attacks(f, None, Rig()); app.server = None
+    check("%s leaves a condition" % kind, app.session["statuses"], kind)
+    screen(app, app.screen_conditions, ["enter", "esc"])
+    check("%s's condition can be cleared by the GM" % kind,
+          not app.session["statuses"], app.session["statuses"])
+
+# --- killing the Skunk lifts its mark on its own --------------------------
+app, net, f = ice_bench("Skunk")
+app.ice_attacks(f, None, Rig())
+check("Skunk marks them", app.has_status("skunk"))
+f["rez"] = 1
+act(app, "Zap", total=99, floor=3)
+check("destroying the Skunk clears its mark on its own",
+      not app.has_status("skunk"), app.session["statuses"])
+
+# --- the GM can apply and clear their own ---------------------------------
+app, net = bench(); app.server = None
+screen(app, app.screen_conditions,
+       list("Apply a condition") + ["enter"] + list("Cyberpsychosis") + ["enter"] + ["enter", "esc"])
+check("the GM can apply a condition of their own",
+      any("Cyberpsychosis" in s["text"] for s in app.session["statuses"]), app.session["statuses"])
+screen(app, app.screen_conditions, list("Clear everything") + ["enter", "down", "enter", "esc"])
+check("and clear the lot", app.session["statuses"] == [], app.session["statuses"])
+
+# --- conditions reach the player ------------------------------------------
+app, net, f = ice_bench("Hellhound")
+app.ice_attacks(f, None, Rig())
+view = app.player_view()
+check("the player is sent their conditions", view["statuses"], view["statuses"])
+check("including how each one ends", view["statuses"][0].get("ends"), view["statuses"][0])
+check("the summary line still reads", view["condition"]["status"], view["condition"])
+check("the player has the Put Out the Fire operation",
+      any(o["name"] == "Put Out the Fire" for o in N.FALLBACK_OPS))
+
 print("\n" + ("ALL CHECKS PASSED" if not fails else "FAILURES: " + repr(fails)))
 sys.exit(1 if fails else 0)

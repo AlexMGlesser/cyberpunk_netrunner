@@ -178,6 +178,14 @@ Sword and Banhammer roll different dice depending on whether they're hitting Bla
 
 Anti-Personnel ICE comes for the netrunner; Anti-Program ICE goes for a rezzed program at random. Generated architectures use these real stats too.
 
+### Taking a condition back off
+
+Anything a hit leaves behind — on fire, pinned, marked by a Skunk, a stat drain — shows on **Conditions**, on the NET combat screen and on the netrunner's sheet. Each one says how it ends, and selecting it clears it. You can also apply a condition of your own, or clear the lot.
+
+Some clear themselves: **Kraken's pin** lifts when the round turns, and **Skunk's −2** lifts the moment that Skunk is destroyed.
+
+**Fire is the one they can deal with themselves.** The book makes putting yourself out a *Meat Action*, so the player has a **Put Out the Fire** entry that costs nothing from their NET Actions. Either of you can end it. Until then it's 2 HP every time the round turns.
+
 Give a piece of ICE an **SPD** and it gets an ambush check the moment they arrive on its floor: *its SPD + 1d10* against their *Interface + 1d10*. If it wins, it lands its effect immediately, before anyone acts. Leave SPD at 0 and it simply waits. **NET combat**, on the session menu and on Run control, is where you use them:
 
 - **`<ICE>` attacks the netrunner** — rolls *ICE ATK + 1d10* against their *Interface + 1d10*, and on a hit rolls the damage dice straight off their HP

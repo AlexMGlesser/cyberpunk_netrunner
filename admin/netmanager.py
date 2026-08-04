@@ -735,6 +735,12 @@ OPERATIONS = [
      "desc": "Rez an Attacker, Defender or Booster from your deck. A rezzed "
              "program has its own REZ, which anti-program ICE will go after "
              "instead of you."},
+    {"name": "Put Out the Fire", "cost": "Meat Action", "check": "--",
+     "success": "You beat the flames out and stop taking 2 HP a turn.",
+     "failure": "--",
+     "desc": "Your deck and clothes are burning. Putting yourself out is a Meat "
+             "Action, so it costs nothing from your NET Actions -- but it is a "
+             "thing your body does, so you are not netrunning while you do it."},
     {"name": "Speak to the GM", "cost": "--", "check": "--",
      "desc": "Describe something your Netrunner does that isn't on this list."},
     {"name": "Jack Out", "cost": "--", "check": "--",
@@ -1567,6 +1573,16 @@ class App:
         if action in ("Move Down a Floor", "Move Up a Floor"):
             return self._auto_move(net, run, down=action.startswith("Move Down"))
 
+        if action == "Put Out the Fire":
+            if not self.has_status("fire"):
+                text = "You are not on fire."
+            else:
+                self.clear_status("fire")
+                text = "You beat the flames out. The burning stops."
+            self.feed(text, "sys")
+            self.log("AUTO: " + text)
+            return text
+
         if action == "Restore a Program":
             prog = self.rezzed_by_id((entry or {}).get("program_id"))
             if prog is None:
@@ -1841,6 +1857,7 @@ class App:
         floor["rez"] = rez
         if rez <= 0:
             floor["state"] = "Destroyed"
+            self.on_ice_destroyed(floor)
             return "%s hits for %d (%s). %s is destroyed -- floor %d is clear." % (
                 prog["name"], damage, detail, floor.get("type", "it"), floor["n"])
         floor["state"] = "Rezzed"
@@ -1949,11 +1966,15 @@ class App:
             text += " [" + ", ".join(notes) + "]"
         return text + ". HP %s/%s." % (cond["hp"], hp_max)
 
-    def add_status(self, tag, text):
-        """Record an ongoing condition the netrunner is under."""
+    def add_status(self, tag, text, ends=""):
+        """Record an ongoing condition the netrunner is under.
+
+        `ends` says how it goes away, so the GM's screen can tell them rather
+        than leaving it to be remembered.
+        """
         statuses = self.session.setdefault("statuses", [])
         if not any(s["tag"] == tag for s in statuses):
-            statuses.append({"tag": tag, "text": text})
+            statuses.append({"tag": tag, "text": text, "ends": ends})
         cond = self.session.setdefault("condition", {"hp": None, "status": ""})
         cond["status"] = "; ".join(s["text"] for s in statuses)
 
@@ -1965,6 +1986,12 @@ class App:
 
     def has_status(self, tag):
         return any(s["tag"] == tag for s in self.session.get("statuses", []))
+
+    def on_ice_destroyed(self, floor):
+        """Some marks only last as long as the ICE that left them."""
+        if floor.get("type") == "Skunk" and self.has_status("skunk"):
+            self.clear_status("skunk")
+            self.feed("With the Skunk gone, your Slide checks are clean again.", "sys")
 
     def apply_ice_effect(self, spec, name, target, rng=None):
         """Run the named effect from the Black ICE table."""
@@ -1978,13 +2005,15 @@ class App:
             text = self.brain_damage(dmg, detail, "%s hits you" % name)
             follow = spec.get("then")
             if follow == "fire":
-                self.add_status("fire", "on fire -- 2 HP at the end of each turn")
+                self.add_status("fire", "on fire -- 2 HP at the end of each turn",
+                                "they spend a Meat Action putting themselves out")
                 text += " Your deck catches fire: 2 HP each turn until you put it out."
             elif follow == "slow":
                 self.turn()["penalty_next"] = 1
                 text += " One fewer NET Action next turn."
             elif follow == "pinned":
-                self.add_status("pinned", "pinned -- cannot go deeper or Jack Out safely")
+                self.add_status("pinned", "pinned -- cannot go deeper or Jack Out safely",
+                                "the end of their next turn (cleared automatically)")
                 text += " You cannot go deeper or Jack Out safely until the end of your next turn."
             elif follow == "jack_out_unsafe":
                 self.session["run"] = None
@@ -2029,12 +2058,14 @@ class App:
             drop, detail = roll_dice("1d6", rng)
             stats = spec.get("stats", "a stat")
             self.add_status("drain_" + stats.split(",")[0].strip().lower(),
-                            "%s down %d" % (stats, drop))
+                            "%s down %d" % (stats, drop),
+                            "an hour of game time -- clear it when that passes")
             return "%s scrambles you: %s each down %d for the next hour (minimum 1)." % (
                 name, stats, drop)
 
         if kind == "slide_penalty":
-            self.add_status("skunk", "Slide checks at -2")
+            self.add_status("skunk", "Slide checks at -2",
+                            "that Skunk is derezzed (cleared automatically)")
             return "%s marks you -- all your Slide checks are at -2 until it is derezzed." % name
 
         dmg, detail = roll_dice(spec.get("damage"), rng)
@@ -2062,6 +2093,7 @@ class App:
         floor["revealed"] = True
         if rez <= 0:
             floor["state"] = "Destroyed"
+            self.on_ice_destroyed(floor)
             return "%d damage -- %s is destroyed. Floor %d is clear." % (
                 damage, floor.get("type", "it"), floor["n"])
         floor["state"] = "Rezzed"
@@ -2349,7 +2381,9 @@ class App:
                     None,
                     ("Send a message to the netrunner", "msg"),
                     ("Netrunner character sheet", "char"),
-                    ("NET combat", "combat"),
+                    ("NET combat" + (C.RED + "   %d condition(s) on them" % len(
+                        self.session.get("statuses") or []) + C.RESET
+                        if self.session.get("statuses") else ""), "combat"),
                     ("Downloaded files (%d)" % len(self.session.get("files") or []), "files"),
                     ("Session log", "log"),
                     ("Netrunning reference", "ref"),
@@ -3248,6 +3282,72 @@ class App:
                 self.session["pathfinder_step"] = PATHFINDER_STEP
             self.touch()
 
+    def screen_conditions(self):
+        """Everything currently on the netrunner, and how to take it off."""
+        keep = 0
+        while True:
+            statuses = self.session.setdefault("statuses", [])
+
+            def head():
+                out = self.ui.banner("CONDITIONS",
+                                     "%d on the netrunner" % len(self.session.get("statuses", [])))
+                out.append("")
+                if not self.session.get("statuses"):
+                    out.append(" " + C.GREY + "Nothing on them right now." + C.RESET)
+                for s in self.session.get("statuses", []):
+                    out.append(" " + C.RED + G["dot"] + " " + s["text"] + C.RESET)
+                    if s.get("ends"):
+                        out.append("   " + C.GREY + "ends when " + s["ends"] + C.RESET)
+                out.append("")
+                return out
+
+            items = []
+            for s in statuses:
+                label = "Clear: %s" % _ANSI_RE.sub("", s["text"])
+                if s["tag"] == "fire":
+                    label = "Put the fire out" + C.GREY + "  (their Meat Action)" + C.RESET
+                items.append((label, ("clear", s["tag"])))
+            if not items:
+                items.append((C.GREY + "(nothing to clear)" + C.RESET, HEADING))
+            items.append(None)
+            items.append(("Apply a condition of your own", ("add", None)))
+            if statuses:
+                items.append((C.RED + "Clear everything" + C.RESET, ("clearall", None)))
+
+            choice = self.ui.menu(head, items, index=keep, watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if not isinstance(choice, tuple):
+                continue
+            kind, tag = choice
+            if kind == "clear":
+                gone = next((s for s in statuses if s["tag"] == tag), None)
+                self.clear_status(tag)
+                if tag == "fire":
+                    self.feed("You beat the flames out. The burning stops.", "sys")
+                elif gone:
+                    self.feed("%s -- over." % gone["text"], "sys")
+                self.log("Cleared condition: %s" % (gone["text"] if gone else tag))
+                self.touch()
+            elif kind == "clearall":
+                if self.ui.confirm(head, "Clear every condition on them?"):
+                    self.session["statuses"] = []
+                    cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+                    cond["status"] = ""
+                    self.feed("You are clear of everything.", "sys")
+                    self.touch()
+            elif kind == "add":
+                text = self.ui.prompt(head, "What is on them?", "")
+                if not text or not text.strip():
+                    continue
+                ends = self.ui.prompt(head, "How does it end? (optional)", "")
+                self.add_status("gm_" + slugify(text)[:16], text.strip(), (ends or "").strip())
+                self.feed("Status: %s" % text.strip(), "alert")
+                self.touch()
+
     def screen_combat(self):
         """Run the other side of the fight: what the ICE does, and to whom."""
         keep = 0
@@ -3308,6 +3408,9 @@ class App:
             items.append(("Rez a program for them", ("rez", None)))
             items.append(None)
             items.append(("Netrunner sheet & HP", ("sheet", None)))
+            live = self.session.get("statuses") or []
+            items.append((("Conditions (%d)" % len(live)) if live else "Conditions",
+                          ("conditions", None)))
 
             choice = self.ui.menu(head, items, index=keep,
                                   body=lambda: self.feed_pane(6), watch=lambda: self.version)
@@ -3366,6 +3469,8 @@ class App:
                     self.touch()
             elif kind == "sheet":
                 self.screen_character()
+            elif kind == "conditions":
+                self.screen_conditions()
 
     def screen_turn(self):
         """Where the round lives. Nothing advances until you say so."""
@@ -3592,7 +3697,8 @@ class App:
             items = [
                 ("Current HP         %s / %s" % (
                     cond.get("hp") if cond.get("hp") is not None else "-", hp_max or "-"), "hp"),
-                ("Status             %s" % (cond.get("status") or C.GREY + "(none)" + C.RESET), "status"),
+                ("Conditions         %s" % (cond.get("status")
+                                             or C.GREY + "(none)" + C.RESET), "conditions"),
                 None,
                 ("Apply damage", "damage"),
                 ("Heal", "heal"),
@@ -3607,14 +3713,9 @@ class App:
             if choice == "hp":
                 cond["hp"] = self.ui.prompt_int(head, "Current HP:", cond.get("hp") or hp_max,
                                                 -50, max(1, hp_max) if hp_max else 200)
-            elif choice == "status":
-                v = self.ui.prompt(head, "Status (e.g. 'Cyberpsychosis', blank to clear):",
-                                   cond.get("status", ""))
-                if v is None:
-                    continue
-                cond["status"] = v.strip()
-                if cond["status"]:
-                    self.feed("Status: %s" % cond["status"], "alert")
+            elif choice == "conditions":
+                self.screen_conditions()
+                continue
             elif choice in ("damage", "heal"):
                 amount = self.ui.prompt_int(head, "How much?", 0, 0, 200) or 0
                 if not amount:
@@ -3757,6 +3858,7 @@ AUTO_ACTIONS = {
     "Attack": App._auto_attack,
     "Slide": App._auto_slide,
     "Run a Program": App._auto_rez,
+    "Put Out the Fire": App._auto_rez,    # handled before dispatch; listed for cost lookup
     "Restore a Program": App._auto_rez,   # handled before dispatch; listed for cost lookup
     "Download": App._auto_download,
 }
