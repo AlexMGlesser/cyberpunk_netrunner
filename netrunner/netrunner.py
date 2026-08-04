@@ -561,6 +561,15 @@ FALLBACK_ACTIONS = [
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
+    {"name": "Attack", "cost": "1 NET Action", "targets": "floor",
+     "check": "Program ATK + 1d10 vs the target's DEF",
+     "dv": "the DEF of the Black ICE or Demon you are swinging at",
+     "success": "The program's damage comes off the target's REZ. At 0 REZ it "
+                "is destroyed and the floor is clear.",
+     "failure": "The attack misses and the target is untouched.",
+     "desc": "Swing at Black ICE or a Demon with an Attacker you have rezzed. "
+             "Harder hitting than Zap, but you have to have run the program "
+             "first and it can be derezzed out from under you."},
     {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
@@ -578,9 +587,16 @@ FALLBACK_OPS = [
     {"name": "Move Up a Floor", "cost": "Movement", "check": "--",
      "desc": "Climb back toward the entry point."},
     {"name": "Run a Program", "cost": "1 NET Action", "check": "--",
-     "desc": "Rez an Attacker, Defender or Booster from your deck."},
+     "success": "The program is rezzed and stays up until it is derezzed or "
+                "destroyed. Attackers can then be swung with the Attack action.",
+     "failure": "--",
+     "desc": "Rez an Attacker, Defender or Booster from your deck. A rezzed "
+             "program has its own REZ, which anti-program ICE will go after "
+             "instead of you."},
     {"name": "Speak to the GM", "cost": "--", "check": "--",
      "desc": "Describe something your Netrunner does that isn't on this list."},
+    {"name": "Jack Out", "cost": "--", "check": "--",
+     "desc": "Pull the plug and leave the architecture."},
 ]
 
 
@@ -633,9 +649,9 @@ def default_character():
         "deck": {"name": "Cyberdeck", "slots": 7, "hardware": []},
         "programs": [
             {"name": "Sword", "cls": "Attacker", "atk": 3, "def": 0, "rez": 7,
-             "effect": "3d6 damage to a program or Black ICE."},
+             "damage": "3d6", "effect": "Cuts programs and Black ICE."},
             {"name": "Armor", "cls": "Defender", "atk": 0, "def": 4, "rez": 7,
-             "effect": "Reduces damage you take by 4."},
+             "damage": "", "effect": "Soaks damage aimed at you."},
         ],
         "skills": [dict(s) for s in DEFAULT_SKILLS],
         "notes": "",
@@ -643,7 +659,8 @@ def default_character():
 
 
 def new_program():
-    return {"name": "", "cls": "Attacker", "atk": 0, "def": 0, "rez": 7, "effect": ""}
+    return {"name": "", "cls": "Attacker", "atk": 0, "def": 0, "rez": 7,
+            "damage": "", "effect": ""}
 
 
 def load_profile():
@@ -1207,6 +1224,21 @@ class Client:
             lines.append("   " + C.GREY + G["corner"] + " deeper floors unknown -- run Pathfinder" + C.RESET)
         return lines
 
+    def rezzed_pane(self):
+        rezzed = (self.snap() or {}).get("rezzed") or []
+        if not rezzed:
+            return []
+        lines = [self.ui.rule("RUNNING")]
+        for p in rezzed:
+            rez, top = p.get("rez", 0), p.get("rez_max", 0) or 1
+            colour = C.GREEN if rez > top * 0.66 else C.YELLOW if rez > top * 0.33 else C.RED
+            lines.append(" " + C.CYAN + G["dot"] + " " + C.RESET +
+                         pad(C.BOLD + p["name"] + C.RESET, 16) +
+                         pad(C.GREY + p.get("cls", "") + C.RESET, 22) +
+                         C.GREY + "ATK %-3s dmg %-7s" % (p.get("atk", 0), p.get("damage") or "-")
+                         + C.RESET + colour + "REZ %s/%s" % (rez, top) + C.RESET)
+        return lines
+
     def feed_pane(self, count):
         state = self.snap() or {}
         entries = (state.get("feed") or [])[-count:]
@@ -1269,7 +1301,8 @@ class Client:
                 (C.YELLOW + "JACK OUT" + C.RESET + C.GREY + "  leave the architecture" + C.RESET, ("out",)),
             ]
 
-            choice = self.ui.menu(head, items, index=keep, body=lambda: self.feed_pane(6),
+            choice = self.ui.menu(head, items, index=keep,
+                                  body=lambda: self.rezzed_pane() + self.feed_pane(5),
                                   watch=lambda: self.version)
             keep = self.ui.last_index
             if choice is REFRESH:
@@ -1306,6 +1339,55 @@ class Client:
         ch = state.get("character") or {}
         interface = ch.get("interface", 0) or 0
         cur = run.get("floor", 1)
+        extra = {}
+
+        # Running a program picks from the deck instead of rolling at anything.
+        if action["name"] == "Run a Program":
+            deck = [p for p in (ch.get("programs") or []) if isinstance(p, dict)]
+            up = {p["name"] for p in (state.get("rezzed") or [])}
+            free = [p for p in deck if p.get("name") and p["name"] not in up]
+            if not free:
+                self.ui.alert(self.ui.banner("RUN A PROGRAM"),
+                              ["Nothing left to rez -- everything in your deck is already up,"
+                               if deck else "Your deck is empty.",
+                               "or you have not loaded any programs. My cyberdeck > Programs."],
+                              C.YELLOW)
+                return
+            pick = self.ui.menu(self.ui.banner("RUN A PROGRAM", "what comes up"),
+                                [(pad(C.BOLD + p["name"] + C.RESET, 18) +
+                                  pad(C.GREY + p.get("cls", "") + C.RESET, 24) +
+                                  C.YELLOW + "ATK %-2s DEF %-2s REZ %-2s %s" % (
+                                      p.get("atk", 0), p.get("def", 0), p.get("rez", 0),
+                                      p.get("damage") or "") + C.RESET, p["name"])
+                                 for p in free])
+            if pick is None:
+                return
+            self.conn.send({"type": "action", "action": action["name"], "target": pick,
+                            "target_floor": None, "roll": None, "total": None,
+                            "program": pick, "note": ""})
+            self.ui.alert(self.ui.banner("RUN A PROGRAM"), ["Rezzing %s..." % pick], C.CYAN)
+            return
+
+        # Attacking swings a rezzed program, and rolls on ITS attack value.
+        if action["name"] == "Attack":
+            rezzed = [p for p in (state.get("rezzed") or []) if p.get("atk")]
+            if not rezzed:
+                self.ui.alert(self.ui.banner("ATTACK"), [
+                    "You have no Attacker running.",
+                    "",
+                    "Use 'Run a Program' first to rez one from your deck.",
+                ], C.YELLOW)
+                return
+            pick = self.ui.menu(self.ui.banner("ATTACK", "which program swings"),
+                                [(pad(C.BOLD + p["name"] + C.RESET, 18) +
+                                  C.YELLOW + "ATK %-3s dmg %-8s" % (
+                                      p.get("atk", 0), p.get("damage") or "-") + C.RESET +
+                                  C.GREY + "REZ %s/%s" % (p.get("rez"), p.get("rez_max")) + C.RESET,
+                                  p) for p in rezzed])
+            if pick is None:
+                return
+            extra = {"program_id": pick["id"], "program": pick["name"]}
+            interface = int(pick.get("atk") or 0)      # the program attacks, not you
 
         def act_head():
             lines = self.ui.banner(action["name"].upper(), action.get("check", ""))
@@ -1330,7 +1412,9 @@ class Client:
         wants_roll = "1d10" in (action.get("check") or "")
         if wants_roll:
             mode = self.ui.menu(act_head() + [" " + C.GREY + "on: " + C.RESET + target, ""], [
-                (C.GREEN + "Roll it" + C.RESET + C.GREY + "  Interface %d + 1d10" % interface + C.RESET, "roll"),
+                (C.GREEN + "Roll it" + C.RESET + C.GREY + "  %s %d + 1d10"
+                 % ("ATK" if action["name"] == "Attack" else "Interface", interface)
+                 + C.RESET, "roll"),
                 ("Send without a roll (GM rolls)", "none"),
                 ("Enter a roll I made at the table", "manual"),
             ])
@@ -1340,10 +1424,12 @@ class Client:
                 die, detail = roll_d10()
                 total = die + interface
                 roll_total = total
-                roll_text = "%d  (INT %d + d10 %s)" % (total, interface, detail)
+                roll_text = "%d  (%s %d + d10 %s)" % (
+                    total, "ATK" if action["name"] == "Attack" else "INT", interface, detail)
                 self.ui.alert(act_head(), [
                     "d10 .......... %s" % detail,
-                    "Interface .... %d" % interface,
+                    "%-12s . %d" % ("ATK" if action["name"] == "Attack" else "Interface",
+                                       interface),
                     "TOTAL ........ %d" % total,
                 ], C.GREEN if total >= 10 else C.YELLOW)
             elif mode == "manual":
@@ -1359,7 +1445,7 @@ class Client:
                               "Anything to tell the GM? (optional)", "")
         if note is None:
             note = ""
-        self.conn.send({
+        payload = {
             "type": "action",
             "action": action["name"],
             "target": target,
@@ -1367,7 +1453,9 @@ class Client:
             "roll": roll_text,
             "total": roll_total,
             "note": note.strip(),
-        })
+        }
+        payload.update(extra)
+        self.conn.send(payload)
         auto = (self.snap() or {}).get("auto_resolve", True)
         self.ui.alert(act_head(), ["Sent. Watch the feed." if auto
                                    else "Sent to the GM. Watch the feed."], C.CYAN)
@@ -1555,8 +1643,9 @@ class Client:
                     "%s %s  %s  %s  %s" % (
                         pad(C.BOLD + (p.get("name") or "(unnamed)") + C.RESET, 20),
                         pad(C.CYAN + (p.get("cls") or "-") + C.RESET, 24),
-                        C.YELLOW + "ATK %-2s DEF %-2s REZ %-2s" % (
-                            p.get("atk", 0), p.get("def", 0), p.get("rez", 0)) + C.RESET,
+                        C.YELLOW + "ATK %-2s DEF %-2s REZ %-2s %-6s" % (
+                            p.get("atk", 0), p.get("def", 0), p.get("rez", 0),
+                            p.get("damage") or "") + C.RESET,
                         C.GREY + (p.get("effect") or "")[:28] + C.RESET, ""),
                     ("edit", i)))
             if items:
@@ -1591,6 +1680,8 @@ class Client:
                 ("ATK      %s" % p.get("atk", 0), "atk"),
                 ("DEF      %s" % p.get("def", 0), "def"),
                 ("REZ      %s" % p.get("rez", 0), "rez"),
+                ("Damage   %s" % (p.get("damage") or C.GREY + "(none)" + C.RESET) +
+                 C.GREY + "   dice rolled on a hit, e.g. 3d6" + C.RESET, "damage"),
                 ("Effect   %s" % (C.GREY + (p.get("effect") or "(none)") + C.RESET), "effect"),
                 None,
                 (C.RED + "Unload this program" + C.RESET, "delete"),
@@ -1610,6 +1701,12 @@ class Client:
                     p["cls"] = v
             elif choice in ("atk", "def", "rez"):
                 p[choice] = self.ui.prompt_int(head, choice.upper() + ":", p.get(choice, 0), 0, 30)
+            elif choice == "damage":
+                v = self.ui.prompt(head, "Damage dice (e.g. 3d6, 2d6+2, blank for none):",
+                                   p.get("damage", ""))
+                if v is None:
+                    continue
+                p["damage"] = v.strip()
             elif choice == "effect":
                 v = self.ui.prompt(head, "What it does:", p.get("effect", ""))
                 if v is None:

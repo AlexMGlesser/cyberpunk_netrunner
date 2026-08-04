@@ -101,6 +101,8 @@ Reveal a floor and it appears on their screen instantly.
 | Control | floor marked **Controlled** |
 | Virus | floor marked **Virused** |
 | Zap | 1d6 off the target's REZ; at 0 it's **Destroyed** and the floor is clear |
+| Attack | a rezzed program's damage off the target's REZ |
+| Run a Program | the program is rezzed and stays up until derezzed or destroyed |
 | Download | a copy of the File lands on their deck for the rest of the session |
 
 **Movement is automatic too**, and always **one floor at a time**. Move Down just happens, unless something is actually in the way:
@@ -144,6 +146,30 @@ They learn a floor's DV by **attempting** it: any action rolled against a floor 
 Scanning always starts from the floor they're standing on, stops at the bottom of the architecture, and needs no DV on the floors themselves — the ladder is its own difficulty.
 
 **Rules & difficulty** on the session menu retunes it: change the first rung, change how much each floor deeper adds, or restore the defaults. Set the step to `0` and any successful scan maps the whole way down. The screen previews the resulting ladder against the architecture they're actually in, so you can see what a given roll would reveal.
+
+---
+
+## NET combat
+
+**Their side.** Programs on the netrunner's sheet carry ATK, DEF, REZ and a **damage** die (`3d6`). They rez one with **Run a Program**, and a rezzed program shows in a panel on their run screen with its current REZ.
+
+- **Attack** swings a rezzed Attacker: *program ATK + 1d10 vs the target's DEF*. On a hit, its damage dice come off the target's REZ; at 0 the ICE is destroyed and the floor is clear.
+- **Zap** is unchanged — *Interface + 1d10 vs DEF*, 1d6 damage. Always available, weaker, needs no program.
+- Swinging at something that isn't ICE just tells them there's nothing there rather than bothering you.
+
+**Your side.** Black ICE and Demons get **ATK** and a **damage** die in the floor editor alongside DEF and REZ. **NET combat**, on the session menu and on Run control, is where you use them:
+
+- **`<ICE>` attacks the netrunner** — rolls *ICE ATK + 1d10* against their *Interface + 1d10*, and on a hit rolls the damage dice straight off their HP
+- **`<ICE>` attacks `<program>`** — same roll against the program's DEF, damage off its REZ; at 0 it's derezzed
+- **Attack from something else** — type in an ATK and damage die for anything not on the map
+- Rez, derez, or set the REZ of any of their programs
+- The whole exchange is written to their feed and your log, with both rolls shown
+
+Anti-personnel ICE (Hellhound, Killer, Liche…) and anti-program ICE (Asp, Raven, Wisp…) are tracked separately, so it's clear which should be going after the runner and which after their software.
+
+**Damage dice** accept `3d6`, `2d6+2`, `d10` and so on. Leave one blank and the program says so rather than inventing a number — that's your call to make.
+
+Generated architectures come fight-ready: every piece of ICE gets ATK, DEF, REZ and damage scaled to the tier, so you can roll an Advanced architecture and run a fight in it without filling anything in.
 
 ---
 
@@ -301,6 +327,7 @@ netrunner.py  [--host ADDRESS] [--port 7717] [--ascii]
 ```bash
 python3 tests/test_selfcontained.py   # proves both scripts need nothing but Python
 python3 tests/test_generate.py        # the architecture generator's structure rules
+python3 tests/test_combat.py          # dice, programs, ICE attacks, damage and REZ
 ```
 
 `test_selfcontained.py` guards the promise at the top of this file: every import is standard library, neither script imports the other, platform-only modules stay behind their guard, nothing needs newer than Python 3.7, and either script works alone in an empty folder with no `rules.json`, `saves/` or `library/` present.

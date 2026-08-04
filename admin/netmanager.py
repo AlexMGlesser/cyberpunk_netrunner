@@ -553,8 +553,9 @@ FLOOR_STATES = ["Intact", "Defeated", "Alerted", "Controlled", "Virused",
 PATHFINDER_BASE = 6     # to read the floor directly beneath you
 PATHFINDER_STEP = 4     # added for each floor deeper than that
 
-BLACK_ICE = {"Hellhound", "Sabertooth", "Kraken", "Dragon", "Killer", "Liche",
-             "Asp", "Giant", "Raven", "Scorpion", "Skunk", "Wisp"}
+ANTI_PERSONNEL = {"Hellhound", "Sabertooth", "Kraken", "Dragon", "Killer", "Liche"}
+ANTI_PROGRAM = {"Asp", "Giant", "Raven", "Scorpion", "Skunk", "Wisp"}
+BLACK_ICE = ANTI_PERSONNEL | ANTI_PROGRAM
 DEMONS = {"Imp", "Efreet", "Balron"}
 
 # A floor you have to get through before moving deeper.
@@ -629,6 +630,15 @@ NET_ACTIONS = [
      "failure": "The copy is corrupted and you get nothing.",
      "desc": "Pull a copy of a File out of the architecture. Eye-Dee tells you "
              "what something is; this is what actually takes it with you."},
+    {"name": "Attack", "cost": "1 NET Action", "targets": "floor",
+     "check": "Program ATK + 1d10 vs the target's DEF",
+     "dv": "the DEF of the Black ICE or Demon you are swinging at",
+     "success": "The program's damage comes off the target's REZ. At 0 REZ it "
+                "is destroyed and the floor is clear.",
+     "failure": "The attack misses and the target is untouched.",
+     "desc": "Swing at Black ICE or a Demon with an Attacker you have rezzed. "
+             "Harder hitting than Zap, but you have to have run the program "
+             "first and it can be derezzed out from under you."},
     {"name": "Zap", "cost": "1 NET Action", "targets": "floor",
      "check": "Interface + 1d10 vs the target's DEF",
      "dv": "the target's DEF",
@@ -646,7 +656,12 @@ OPERATIONS = [
     {"name": "Move Up a Floor", "cost": "Movement", "check": "--",
      "desc": "Climb back toward the entry point."},
     {"name": "Run a Program", "cost": "1 NET Action", "check": "--",
-     "desc": "Rez an Attacker, Defender or Booster from your deck."},
+     "success": "The program is rezzed and stays up until it is derezzed or "
+                "destroyed. Attackers can then be swung with the Attack action.",
+     "failure": "--",
+     "desc": "Rez an Attacker, Defender or Booster from your deck. A rezzed "
+             "program has its own REZ, which anti-program ICE will go after "
+             "instead of you."},
     {"name": "Speak to the GM", "cost": "--", "check": "--",
      "desc": "Describe something your Netrunner does that isn't on this list."},
     {"name": "Jack Out", "cost": "--", "check": "--",
@@ -691,6 +706,9 @@ def new_session(name):
         "condition": {"hp": None, "status": ""},
         "auto_resolve": True,   # settle rolls against floor DVs without asking
         "files": [],            # what the netrunner has downloaded and kept
+        # Programs the netrunner has rezzed. Their current REZ is ours to track
+        # for the same reason current HP is -- so a sheet edit cannot undo damage.
+        "rezzed": [],
         # The GM decides when a round ends, so this only moves when they say so.
         "turn": {"round": 1, "used": 0, "spent": {}},
         # Pathfinder's rising ladder: the floor just below you needs `base`,
@@ -725,6 +743,8 @@ def new_floor(number):
         "dv": 6,
         "def": 0,          # Black ICE / Demons: what a Zap has to beat
         "rez": 0,          # Black ICE / Demons: knock this to 0 and it dies
+        "atk": 0,          # what it rolls when it attacks
+        "damage": "",      # what it does on a hit, e.g. "3d6"
         "label": "",
         "content": "",     # File floors: what the netrunner walks away with
         "dv_known": False, # has the netrunner learned how hard this floor is?
@@ -802,25 +822,25 @@ GEN_TIERS = {
         "floors": (3, 5), "dv": (4, 8), "ice_chance": 0.35,
         "ice": ["Wisp", "Skunk", "Scorpion", "Asp"],
         "demons": [], "demon_chance": 0.0,
-        "def": (2, 4), "rez": (4, 8), "run": (1, 1),
+        "def": (2, 4), "rez": (4, 8), "run": (1, 1), "atk": (2, 4), "damage": ["1d6", "2d6"],
     },
     "Standard": {
         "floors": (5, 7), "dv": (6, 11), "ice_chance": 0.45,
         "ice": ["Wisp", "Skunk", "Scorpion", "Asp", "Raven", "Giant", "Hellhound"],
         "demons": ["Imp"], "demon_chance": 0.10,
-        "def": (3, 5), "rez": (6, 12), "run": (1, 2),
+        "def": (3, 5), "rez": (6, 12), "run": (1, 2), "atk": (3, 6), "damage": ["2d6", "3d6"],
     },
     "Uncommon": {
         "floors": (7, 9), "dv": (8, 14), "ice_chance": 0.55,
         "ice": ["Raven", "Giant", "Hellhound", "Killer", "Sabertooth", "Kraken", "Asp"],
         "demons": ["Imp", "Efreet"], "demon_chance": 0.18,
-        "def": (4, 6), "rez": (10, 18), "run": (1, 2),
+        "def": (4, 6), "rez": (10, 18), "run": (1, 2), "atk": (5, 8), "damage": ["3d6", "4d6"],
     },
     "Advanced": {
         "floors": (9, 12), "dv": (10, 17), "ice_chance": 0.62,
         "ice": ["Killer", "Sabertooth", "Kraken", "Liche", "Dragon", "Hellhound", "Giant"],
         "demons": ["Efreet", "Balron"], "demon_chance": 0.25,
-        "def": (5, 8), "rez": (14, 26), "run": (1, 3),
+        "def": (5, 8), "rez": (14, 26), "run": (1, 3), "atk": (7, 11), "damage": ["4d6", "5d6", "6d6"],
     },
 }
 
@@ -844,6 +864,34 @@ GEN_FILES = [
 GEN_NODES = ["door locks", "security cameras", "the freight elevator",
              "the alarm system", "ventilation", "a turret mount",
              "the lighting grid", "the loading bay shutters", "fire suppression"]
+
+
+DICE_RE = re.compile(r"^\s*(\d*)\s*d\s*(\d+)\s*(?:([+-])\s*(\d+))?\s*$", re.I)
+
+
+def roll_dice(spec, rng=None):
+    """Roll a damage string like '3d6', '1d6+2' or 'd10'.
+
+    Returns (total, breakdown). An unreadable or empty string rolls nothing,
+    which lets a GM leave damage blank and call it themselves.
+    """
+    rng = rng or random
+    match = DICE_RE.match(str(spec or ""))
+    if not match:
+        return 0, ""
+    count = int(match.group(1) or 1)
+    sides = int(match.group(2) or 6)
+    if count < 1 or count > 50 or sides < 2 or sides > 100:
+        return 0, ""
+    modifier = int(match.group(4) or 0)
+    if match.group(3) == "-":
+        modifier = -modifier
+    rolls = [rng.randint(1, sides) for _ in range(count)]
+    total = max(0, sum(rolls) + modifier)
+    detail = "%dd%d: %s" % (count, sides, "+".join(str(r) for r in rolls))
+    if modifier:
+        detail += " %s%d" % ("+" if modifier > 0 else "-", abs(modifier))
+    return total, "%s = %d" % (detail, total)
 
 
 def _spread(lo, hi, count, rng):
@@ -905,6 +953,7 @@ def generate_architecture(difficulty, rng=None):
     ice_count = sum(1 for k in kinds if k not in REWARD_TYPES and k != "Password")
     defs = _spread(cfg["def"][0], cfg["def"][1], ice_count, rng)
     rezzes = _spread(cfg["rez"][0], cfg["rez"][1], ice_count, rng)
+    atks = _spread(cfg["atk"][0], cfg["atk"][1], ice_count, rng)
 
     files = rng.sample(GEN_FILES, min(len(GEN_FILES), max(1, kinds.count("File"))))
     nodes = rng.sample(GEN_NODES, min(len(GEN_NODES), max(1, kinds.count("Control Node"))))
@@ -922,6 +971,8 @@ def generate_architecture(difficulty, rng=None):
         elif kind != "Password":
             floor["def"] = defs[ice_i] if ice_i < len(defs) else cfg["def"][0]
             floor["rez"] = rezzes[ice_i] if ice_i < len(rezzes) else cfg["rez"][0]
+            floor["atk"] = atks[ice_i] if ice_i < len(atks) else cfg["atk"][0]
+            floor["damage"] = rng.choice(cfg["damage"])
             ice_i += 1
         net["floors"].append(floor)
     return net
@@ -1310,6 +1361,7 @@ class App:
                 "character": s.get("character") or {},
                 "condition": s.get("condition") or {"hp": None, "status": ""},
                 "files": s.get("files") or [],
+                "rezzed": s.get("rezzed") or [],
                 "turn": {
                     "round": self.turn().get("round", 1),
                     "used": self.turn().get("used", 0),
@@ -1416,6 +1468,13 @@ class App:
         if action in ("Move Down a Floor", "Move Up a Floor"):
             return self._auto_move(net, run, down=action.startswith("Move Down"))
 
+        # Rezzing a program targets nothing and rolls nothing.
+        if action == "Run a Program":
+            text = self._auto_rez(net, None, True, 0, 0, entry)
+            self.feed(text, "sys")
+            self.log("AUTO: " + text)
+            return text
+
         floor = None
         want = entry.get("target_floor") or run.get("floor")
         for f in net["floors"]:
@@ -1433,7 +1492,14 @@ class App:
             return None            # they asked us to roll for them
 
         # Zap is measured against DEF, everything else against the floor DV.
-        if action == "Zap":
+        if action in ("Zap", "Attack"):
+            # Swinging at something that is not ICE needs no roll and no GM --
+            # there is simply nothing there to hit.
+            if floor.get("type") not in BLACK_ICE and floor.get("type") not in DEMONS:
+                text = "%s -- there is nothing on floor %d to attack." % (action, floor["n"])
+                self.feed(text, "sys")
+                self.log("AUTO: " + text)
+                return text
             against = floor.get("def")
         elif action == "Pathfinder":
             against = self.pathfinder_dv(0)     # its own ladder, not the floor DV
@@ -1450,7 +1516,7 @@ class App:
         # Having actually tested a floor, they now know what it took.
         if action != "Pathfinder" and against:
             floor["dv_known"] = True
-        detail = handler(self, net, floor, beat, total, against)
+        detail = handler(self, net, floor, beat, total, against, entry)
         label = "DEF" if action == "Zap" else "DV"
         text = "%s vs %s %d -- rolled %d -- %s. %s" % (
             action, label, against, total, verdict, detail)
@@ -1539,7 +1605,7 @@ class App:
         self.log("AUTO: netrunner moved down to floor %d." % run["floor"])
         return text
 
-    def _auto_download(self, net, floor, beat, total, against):
+    def _auto_download(self, net, floor, beat, total, against, entry):
         if floor.get("type") != "File":
             return "There is nothing here to copy."
         if not beat:
@@ -1558,7 +1624,108 @@ class App:
         })
         return "%s is on your deck. Read it any time this session." % name
 
-    def _auto_zap(self, net, floor, beat, total, against):
+    def rezzed_by_id(self, pid):
+        for prog in self.session.setdefault("rezzed", []):
+            if prog["id"] == pid:
+                return prog
+        return None
+
+    def _auto_rez(self, net, floor, beat, total, against, entry):
+        """Bring a program up off the netrunner's sheet."""
+        wanted = (entry or {}).get("program")
+        deck = (self.session.get("character") or {}).get("programs") or []
+        spec = next((p for p in deck if isinstance(p, dict) and p.get("name") == wanted), None)
+        if spec is None:
+            return "There is no '%s' in your deck." % (wanted or "?")
+        if any(p["name"] == spec["name"] for p in self.session.setdefault("rezzed", [])):
+            return "%s is already running." % spec["name"]
+        rez = int(spec.get("rez") or 0)
+        self.session["rezzed"].append({
+            "id": uuid.uuid4().hex[:6],
+            "name": spec.get("name", "?"),
+            "cls": spec.get("cls", ""),
+            "atk": int(spec.get("atk") or 0),
+            "def": int(spec.get("def") or 0),
+            "rez": rez, "rez_max": rez,
+            "damage": spec.get("damage") or "",
+        })
+        return "%s is up and running (REZ %d)." % (spec.get("name", "?"), rez)
+
+    def _auto_attack(self, net, floor, beat, total, against, entry):
+        """A rezzed Attacker swinging at Black ICE or a Demon."""
+        prog = self.rezzed_by_id((entry or {}).get("program_id"))
+        if prog is None:
+            return "That program is not running."
+        if floor.get("type") not in BLACK_ICE and floor.get("type") not in DEMONS:
+            return "There is nothing here to attack."
+        if not beat:
+            return "%s swings and misses." % prog["name"]
+        damage, detail = roll_dice(prog.get("damage"))
+        floor["revealed"] = True
+        if not damage:
+            return ("%s connects, but it has no damage set -- call it yourself."
+                    % prog["name"])
+        rez = max(0, (floor.get("rez") or 0) - damage)
+        floor["rez"] = rez
+        if rez <= 0:
+            floor["state"] = "Destroyed"
+            return "%s hits for %d (%s). %s is destroyed -- floor %d is clear." % (
+                prog["name"], damage, detail, floor.get("type", "it"), floor["n"])
+        floor["state"] = "Rezzed"
+        return "%s hits for %d (%s). %s has %d REZ left." % (
+            prog["name"], damage, detail, floor.get("type", "it"), rez)
+
+    def ice_attacks(self, floor, target, rng=None):
+        """Resolve one attack by a floor's ICE. `target` is None for the
+        netrunner, or a rezzed program. Returns a description of what happened."""
+        rng = rng or random
+        atk = int(floor.get("atk") or 0)
+        attack_roll = atk + rng.randint(1, 10)
+        name = floor.get("type", "Black ICE")
+
+        if target is None:
+            interface = self.actions_per_turn() and (
+                self.session.get("character") or {}).get("interface", 0) or 0
+            defence = int(interface) + rng.randint(1, 10)
+            who = "you"
+        else:
+            defence = int(target.get("def") or 0) + rng.randint(1, 10)
+            who = target["name"]
+
+        head = "%s attacks %s -- %d vs %d" % (name, who, attack_roll, defence)
+        if attack_roll < defence:
+            self.feed(head + ". It misses.", "sys")
+            self.log("ICE: " + head + " -- miss")
+            return head + ". It misses."
+
+        damage, detail = roll_dice(floor.get("damage"), rng)
+        if not damage:
+            text = head + ". It connects, but no damage is set for it."
+            self.feed(text, "alert")
+            self.log("ICE: " + text)
+            return text
+
+        if target is None:
+            cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+            hp_max = (self.session.get("character") or {}).get("hp_max") or 0
+            current = cond.get("hp") if cond.get("hp") is not None else hp_max
+            cond["hp"] = current - damage
+            text = "%s. It hits you for %d (%s). HP %s/%s." % (
+                head, damage, detail, cond["hp"], hp_max)
+        else:
+            target["rez"] = max(0, target.get("rez", 0) - damage)
+            text = "%s. It hits %s for %d (%s)." % (head, target["name"], damage, detail)
+            if target["rez"] <= 0:
+                self.session["rezzed"] = [
+                    p for p in self.session.get("rezzed", []) if p["id"] != target["id"]]
+                text += " %s is derezzed." % target["name"]
+            else:
+                text += " %s has %d REZ left." % (target["name"], target["rez"])
+        self.feed(text, "alert")
+        self.log("ICE: " + text)
+        return text
+
+    def _auto_zap(self, net, floor, beat, total, against, entry):
         if not beat:
             return "Your bolt goes wide."
         damage = random.randint(1, 6)
@@ -1572,7 +1739,7 @@ class App:
         floor["state"] = "Rezzed"
         return "%d damage. %s has %d REZ left." % (damage, floor.get("type", "it"), rez)
 
-    def _auto_backdoor(self, net, floor, beat, total, dv):
+    def _auto_backdoor(self, net, floor, beat, total, against, entry):
         if beat:
             floor["state"] = "Defeated"
             floor["revealed"] = True
@@ -1588,7 +1755,7 @@ class App:
         base, step = self.pathfinder_ladder()
         return base + step * depth
 
-    def _auto_pathfinder(self, net, floor, beat, total, against):
+    def _auto_pathfinder(self, net, floor, beat, total, against, entry):
         below = [f for f in net["floors"] if f["n"] > floor["n"]]
         if not below:
             return "There is nothing below you to scan."
@@ -1610,21 +1777,21 @@ class App:
                 below[len(reached)]["n"], self.pathfinder_dv(len(reached)))
         return text
 
-    def _auto_eyedee(self, net, floor, beat, total, dv):
+    def _auto_eyedee(self, net, floor, beat, total, against, entry):
         if beat:
             floor["revealed"] = True
             return "You make out what Floor %d holds%s." % (
                 floor["n"], (": " + floor["label"]) if floor.get("label") else "")
         return "The contents stay scrambled."
 
-    def _auto_control(self, net, floor, beat, total, dv):
+    def _auto_control(self, net, floor, beat, total, against, entry):
         if beat:
             floor["state"] = "Controlled"
             floor["revealed"] = True
             return "The node answers to you now."
         return "The node refuses you."
 
-    def _auto_virus(self, net, floor, beat, total, dv):
+    def _auto_virus(self, net, floor, beat, total, against, entry):
         if beat:
             floor["state"] = "Virused"
             floor["revealed"] = True
@@ -1706,6 +1873,8 @@ class App:
                     "target_floor": msg.get("target_floor"),
                     "roll": msg.get("roll"),
                     "total": msg.get("total"),
+                    "program": msg.get("program"),
+                    "program_id": msg.get("program_id"),
                     "note": msg.get("note", ""),
                 }
                 roll = (" [rolled %s]" % entry["roll"]) if entry["roll"] else ""
@@ -1848,6 +2017,7 @@ class App:
                     None,
                     ("Send a message to the netrunner", "msg"),
                     ("Netrunner character sheet", "char"),
+                    ("NET combat", "combat"),
                     ("Downloaded files (%d)" % len(self.session.get("files") or []), "files"),
                     ("Session log", "log"),
                     ("Netrunning reference", "ref"),
@@ -1874,6 +2044,8 @@ class App:
                     self.screen_message()
                 elif choice == "char":
                     self.screen_character()
+                elif choice == "combat":
+                    self.screen_combat()
                 elif choice == "files":
                     self.screen_files()
                 elif choice == "log":
@@ -2325,6 +2497,12 @@ class App:
                 ("REZ           %s%s" % (f.get("rez") or "--",
                                          C.GREY + "   drops to 0 and it dies" + C.RESET
                                          if is_ice else ""), "rez"),
+                ("ATK           %s%s" % (f.get("atk") or "--",
+                                         C.GREY + "   what it rolls when it attacks" + C.RESET
+                                         if is_ice else ""), "atk"),
+                ("Damage        %s%s" % (f.get("damage") or "--",
+                                         C.GREY + "   e.g. 3d6, rolled on a hit" + C.RESET
+                                         if is_ice else ""), "damage"),
                 ("Label         %s" % (f.get("label") or C.GREY + "(none)" + C.RESET), "label"),
                 ("File contents %s%s" % (
                     C.GREY + ((f.get("content") or "(empty)")[:44]) + C.RESET,
@@ -2363,6 +2541,16 @@ class App:
             elif choice == "dv":
                 v = self.ui.prompt_int(head, "Difficulty Value (blank for none):", f.get("dv"), 0, 30)
                 f["dv"] = v
+                self.touch()
+            elif choice == "damage":
+                v = self.ui.prompt(head, "Damage dice on a hit (e.g. 3d6, 2d6+2):",
+                                   f.get("damage", ""))
+                if v is not None:
+                    f["damage"] = v.strip()
+                    self.touch()
+            elif choice == "atk":
+                f["atk"] = self.ui.prompt_int(head, "ATK -- added to its d10 when it attacks:",
+                                              f.get("atk") or 0, 0, 30)
                 self.touch()
             elif choice in ("def", "rez"):
                 label = ("DEF -- a Zap has to beat this:" if choice == "def"
@@ -2513,6 +2701,8 @@ class App:
                 (C.GREEN + "Start the next round" + C.RESET + C.GREY +
                  "  refills their NET Actions" + C.RESET, "nextround"),
                 ("Turn & NET Actions", "turn"),
+                (C.RED + "NET combat" + C.RESET + C.GREY +
+                 "  ICE attacks, programs, damage" + C.RESET, "combat"),
                 None,
                 ("Reset this architecture around them" + C.GREY +
                  "  back to floor 1, nothing revealed" + C.RESET, "reset"),
@@ -2562,6 +2752,8 @@ class App:
                 self.touch()
             elif choice == "turn":
                 self.screen_turn()
+            elif choice == "combat":
+                self.screen_combat()
             elif choice == "reset":
                 self.reset_one(net, head)
             elif choice == "block":
@@ -2705,6 +2897,124 @@ class App:
                 self.session["pathfinder_base"] = PATHFINDER_BASE
                 self.session["pathfinder_step"] = PATHFINDER_STEP
             self.touch()
+
+    def screen_combat(self):
+        """Run the other side of the fight: what the ICE does, and to whom."""
+        keep = 0
+        while True:
+            run = self.session.get("run")
+            net = self.net_by_id(run["net_id"]) if run else None
+            here = next((f for f in (net or {}).get("floors", [])
+                         if f["n"] == (run or {}).get("floor", 1)), None) if net else None
+            rezzed = self.session.setdefault("rezzed", [])
+
+            def head():
+                cond = self.session.setdefault("condition", {"hp": None, "status": ""})
+                ch = self.session.get("character") or {}
+                hp_max = ch.get("hp_max") or 0
+                hp = cond.get("hp") if cond.get("hp") is not None else hp_max
+                out = self.ui.banner("NET COMBAT",
+                                     "%s, floor %s" % (net["name"], run.get("floor", 1))
+                                     if net else "no run in progress")
+                out.append(" " + C.GREY + "netrunner " + C.RESET +
+                           (ch.get("handle") or "-") + C.GREY + "   HP " + C.RESET +
+                           "%s/%s" % (hp, hp_max) + C.GREY + "   INT " + C.RESET +
+                           str(ch.get("interface", "-")))
+                if here:
+                    bits = "DEF %s  REZ %s  ATK %s  DMG %s" % (
+                        here.get("def") or "-", here.get("rez") or "-",
+                        here.get("atk") or "-", here.get("damage") or "-")
+                    out.append(" " + C.RED + "on this floor: " + here["type"] + C.RESET +
+                               C.GREY + "   " + bits + C.RESET)
+                out.append("")
+                out.append(self.ui.rule("REZZED PROGRAMS"))
+                if not rezzed:
+                    out.append(" " + C.GREY + "(nothing running)" + C.RESET)
+                for p in rezzed:
+                    out.append(" " + C.CYAN + G["dot"] + " " + C.RESET +
+                               pad(C.BOLD + p["name"] + C.RESET, 16) +
+                               pad(C.GREY + p.get("cls", "") + C.RESET, 24) +
+                               C.YELLOW + "ATK %-3s DEF %-3s REZ %s/%s  %s" % (
+                                   p.get("atk", 0), p.get("def", 0), p.get("rez", 0),
+                                   p.get("rez_max", 0), p.get("damage") or "-") + C.RESET)
+                out.append("")
+                return out
+
+            items = []
+            if here and here["type"] in BLACK_ICE | DEMONS:
+                items.append((C.RED + G["arrow"] + " %s attacks the netrunner" % here["type"]
+                              + C.RESET, ("attack", None)))
+                for p in rezzed:
+                    items.append((C.RED + "%s attacks %s" % (here["type"], p["name"]) + C.RESET,
+                                  ("attack", p["id"])))
+            else:
+                items.append((C.GREY + "(no live ICE on their floor)" + C.RESET, HEADING))
+            items.append(None)
+            items.append(("Attack from something else", ("manual", None)))
+            if rezzed:
+                items.append(("Derez one of their programs", ("derez", None)))
+                items.append(("Set a program's REZ", ("setrez", None)))
+            items.append(("Rez a program for them", ("rez", None)))
+            items.append(None)
+            items.append(("Netrunner sheet & HP", ("sheet", None)))
+
+            choice = self.ui.menu(head, items, index=keep,
+                                  body=lambda: self.feed_pane(6), watch=lambda: self.version)
+            keep = self.ui.last_index
+            if choice is REFRESH:
+                continue
+            if choice is None:
+                return
+            if not isinstance(choice, tuple):
+                continue
+            kind, arg = choice
+
+            if kind == "attack":
+                target = self.rezzed_by_id(arg) if arg else None
+                text = self.ice_attacks(here, target)
+                self.touch()
+                self.ui.alert(head, wrap(text, 70), C.RED)
+            elif kind == "manual":
+                attacker = {
+                    "type": self.ui.prompt(head, "What is attacking?", "Black ICE") or "Black ICE",
+                }
+                attacker["atk"] = self.ui.prompt_int(head, "Its ATK:", 4, 0, 30) or 0
+                attacker["damage"] = self.ui.prompt(head, "Its damage (e.g. 3d6):", "3d6") or ""
+                opts = [("The netrunner", None)] + [(p["name"], p["id"]) for p in rezzed]
+                pick = self.ui.menu(head, opts)
+                if pick is None and len(opts) > 1:
+                    continue
+                text = self.ice_attacks(attacker, self.rezzed_by_id(pick) if pick else None)
+                self.touch()
+                self.ui.alert(head, wrap(text, 70), C.RED)
+            elif kind == "derez":
+                pick = self.ui.menu(head, [(p["name"], p["id"]) for p in rezzed])
+                if pick:
+                    prog = self.rezzed_by_id(pick)
+                    self.session["rezzed"] = [p for p in rezzed if p["id"] != pick]
+                    self.feed("%s is derezzed." % prog["name"], "alert")
+                    self.touch()
+            elif kind == "setrez":
+                pick = self.ui.menu(head, [(p["name"], p["id"]) for p in rezzed])
+                if pick:
+                    prog = self.rezzed_by_id(pick)
+                    v = self.ui.prompt_int(head, "%s REZ:" % prog["name"], prog["rez"], 0, 99)
+                    if v is not None:
+                        prog["rez"] = v
+                        self.touch()
+            elif kind == "rez":
+                deck = [p for p in (self.session.get("character") or {}).get("programs") or []
+                        if isinstance(p, dict)]
+                if not deck:
+                    self.ui.alert(head, ["Their deck is empty."], C.GREY)
+                    continue
+                pick = self.ui.menu(head, [(p.get("name", "?"), p.get("name")) for p in deck])
+                if pick:
+                    text = self._auto_rez(net, None, True, 0, 0, {"program": pick})
+                    self.feed(text, "sys")
+                    self.touch()
+            elif kind == "sheet":
+                self.screen_character()
 
     def screen_turn(self):
         """Where the round lives. Nothing advances until you say so."""
@@ -3093,6 +3403,8 @@ AUTO_ACTIONS = {
     "Control": App._auto_control,
     "Virus": App._auto_virus,
     "Zap": App._auto_zap,
+    "Attack": App._auto_attack,
+    "Run a Program": App._auto_rez,
     "Download": App._auto_download,
 }
 
