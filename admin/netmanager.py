@@ -788,6 +788,145 @@ def reset_net(net):
     return ", ".join(bits)
 
 
+# -- architecture generator ------------------------------------------------
+#
+# Semi-random, but with a shape to it. Every architecture is built as a run of
+# obstacles followed by something worth taking, so a File or a Control Node is
+# always sitting behind at least one thing you have to beat. DVs and ICE both
+# get nastier the deeper you go, and the whole ladder scales with the tier.
+
+REWARD_TYPES = ("File", "Control Node")
+
+GEN_TIERS = {
+    "Basic": {
+        "floors": (3, 5), "dv": (4, 8), "ice_chance": 0.35,
+        "ice": ["Wisp", "Skunk", "Scorpion", "Asp"],
+        "demons": [], "demon_chance": 0.0,
+        "def": (2, 4), "rez": (4, 8), "run": (1, 1),
+    },
+    "Standard": {
+        "floors": (5, 7), "dv": (6, 11), "ice_chance": 0.45,
+        "ice": ["Wisp", "Skunk", "Scorpion", "Asp", "Raven", "Giant", "Hellhound"],
+        "demons": ["Imp"], "demon_chance": 0.10,
+        "def": (3, 5), "rez": (6, 12), "run": (1, 2),
+    },
+    "Uncommon": {
+        "floors": (7, 9), "dv": (8, 14), "ice_chance": 0.55,
+        "ice": ["Raven", "Giant", "Hellhound", "Killer", "Sabertooth", "Kraken", "Asp"],
+        "demons": ["Imp", "Efreet"], "demon_chance": 0.18,
+        "def": (4, 6), "rez": (10, 18), "run": (1, 2),
+    },
+    "Advanced": {
+        "floors": (9, 12), "dv": (10, 17), "ice_chance": 0.62,
+        "ice": ["Killer", "Sabertooth", "Kraken", "Liche", "Dragon", "Hellhound", "Giant"],
+        "demons": ["Efreet", "Balron"], "demon_chance": 0.25,
+        "def": (5, 8), "rez": (14, 26), "run": (1, 3),
+    },
+}
+
+GEN_CORPS = ["Arasaka", "Militech", "Petrochem", "Biotechnica", "Kang Tao", "Zetatech",
+             "Night Corp", "SovOil", "Trauma Team", "Dynalar", "Orbital Air", "WorldSat"]
+GEN_SITES = ["Substation", "Data Vault", "Relay", "Cold Store", "Annex", "Uplink",
+             "Records Office", "Logistics Hub", "Black Site", "Server Farm", "Dispatch"]
+
+GEN_FILES = [
+    ("payroll.dat", "Wage ledgers. Names, numbers, and three people being paid who do not exist."),
+    ("personnel.enc", "Staff records. Home addresses, shift patterns, next of kin."),
+    ("security_rota.txt", "Who is on the door, and when they are not."),
+    ("schematics.cad", "Floor plans with the service corridors marked."),
+    ("shipping_manifest.dat", "What moves through here, and on which nights."),
+    ("incident_log.txt", "Every alarm for the past year. Most were not accidents."),
+    ("client_list.enc", "Who pays this place, and what for."),
+    ("research_notes.dat", "Half a project, and a lot of redactions."),
+    ("comms_archive.log", "Internal mail. Someone was careless."),
+    ("access_codes.enc", "Door codes. They rotate, but not often."),
+]
+GEN_NODES = ["door locks", "security cameras", "the freight elevator",
+             "the alarm system", "ventilation", "a turret mount",
+             "the lighting grid", "the loading bay shutters", "fire suppression"]
+
+
+def _spread(lo, hi, count, rng):
+    """`count` values from the range, sorted so they climb with depth."""
+    return sorted(rng.randint(lo, hi) for _ in range(max(1, count)))
+
+
+def _layout(total, cfg, rng):
+    """Floor types, obstacle runs first and the prize at the bottom."""
+    kinds = ["Password"]                       # the way in is always locked
+
+    def obstacle():
+        previous = kinds[-1] if kinds else None
+        if cfg["demons"] and rng.random() < cfg["demon_chance"]:
+            pool = [d for d in cfg["demons"] if d != previous] or cfg["demons"]
+            return rng.choice(pool)
+        if rng.random() < cfg["ice_chance"]:
+            # Two identical pieces of ICE back to back reads as a bug even when
+            # it is not, so prefer anything else.
+            pool = [i for i in cfg["ice"] if i != previous] or cfg["ice"]
+            return rng.choice(pool)
+        return "Password"
+
+    def reward():
+        previous = next((k for k in reversed(kinds) if k in REWARD_TYPES), None)
+        if previous == "File":
+            return "Control Node" if rng.random() < 0.7 else "File"
+        if previous == "Control Node":
+            return "File" if rng.random() < 0.7 else "Control Node"
+        return "Control Node" if rng.random() < 0.4 else "File"
+
+    body = max(1, total - 1)                   # everything above the prize
+    while len(kinds) < body:
+        for _ in range(rng.randint(*cfg["run"])):
+            if len(kinds) >= body:
+                break
+            kinds.append(obstacle())
+        # Only place something worth taking if there is still room for an
+        # obstacle beneath it -- nothing valuable is ever left unguarded, and
+        # the prize at the bottom always has something standing over it.
+        if len(kinds) <= body - 2:
+            kinds.append(reward())
+    kinds.append(reward())
+    return kinds
+
+
+def generate_architecture(difficulty, rng=None):
+    """Build a whole architecture at the given tier. Returns an unsaved net."""
+    rng = rng or random
+    cfg = GEN_TIERS.get(difficulty) or GEN_TIERS["Standard"]
+    total = rng.randint(*cfg["floors"])
+    kinds = _layout(total, cfg, rng)
+
+    net = new_net("%s %s" % (rng.choice(GEN_CORPS), rng.choice(GEN_SITES)))
+    net["difficulty"] = difficulty
+    net["description"] = "Generated %s architecture, %d floors." % (difficulty.lower(), len(kinds))
+
+    dvs = _spread(cfg["dv"][0], cfg["dv"][1], len(kinds), rng)
+    ice_count = sum(1 for k in kinds if k not in REWARD_TYPES and k != "Password")
+    defs = _spread(cfg["def"][0], cfg["def"][1], ice_count, rng)
+    rezzes = _spread(cfg["rez"][0], cfg["rez"][1], ice_count, rng)
+
+    files = rng.sample(GEN_FILES, min(len(GEN_FILES), max(1, kinds.count("File"))))
+    nodes = rng.sample(GEN_NODES, min(len(GEN_NODES), max(1, kinds.count("Control Node"))))
+    ice_i = 0
+    for i, kind in enumerate(kinds):
+        floor = new_floor(i + 1)
+        floor["type"] = kind
+        floor["dv"] = dvs[i]
+        if kind == "File":
+            name, blurb = files.pop() if files else ("data.dat", "")
+            floor["label"] = name
+            floor["content"] = blurb
+        elif kind == "Control Node":
+            floor["label"] = "wired to %s" % (nodes.pop() if nodes else "something")
+        elif kind != "Password":
+            floor["def"] = defs[ice_i] if ice_i < len(defs) else cfg["def"][0]
+            floor["rez"] = rezzes[ice_i] if ice_i < len(rezzes) else cfg["rez"][0]
+            ice_i += 1
+        net["floors"].append(floor)
+    return net
+
+
 # -- architecture library --------------------------------------------------
 
 LIBRARY_DIR = os.path.join(HERE, "library")
@@ -1795,6 +1934,9 @@ class App:
             if items:
                 items.append(None)
             items.append((C.CYAN + "+ Create a new NET Architecture" + C.RESET, "__new__"))
+            items.append((C.CYAN + "+ Generate an architecture" + C.RESET +
+                          C.GREY + "  rolled from a difficulty, previewed first" + C.RESET,
+                          "__generate__"))
             items.append((C.CYAN + "+ Import an architecture" + C.RESET +
                           C.GREY + "  from the library or another session" + C.RESET, "__import__"))
             if self.session["nets"]:
@@ -1823,6 +1965,11 @@ class App:
                 elif net and token == "reset":
                     self.reset_one(net, head)
                 continue
+            if choice == "__generate__":
+                made = self.screen_generate()
+                if made:
+                    self.screen_net(made)
+                continue
             if choice == "__import__":
                 self.screen_import()
                 continue
@@ -1847,6 +1994,82 @@ class App:
             net = self.net_by_id(choice)
             if net:
                 self.screen_net(net)
+
+    def preview_lines(self, net):
+        """The whole architecture laid out, GM's eyes -- nothing is hidden here."""
+        lines = [self.ui.rule("PROPOSED ARCHITECTURE"),
+                 " " + C.BOLD + net["name"] + C.RESET + C.GREY + "   " +
+                 net["difficulty"] + ", %d floors" % len(net["floors"]) + C.RESET,
+                 ""]
+        for f in net["floors"]:
+            kind = f["type"]
+            if kind == "Password":
+                colour = C.YELLOW
+            elif kind in REWARD_TYPES:
+                colour = C.GREEN
+            else:
+                colour = C.RED
+            stats = C.GREY + "DV %-3d" % (f.get("dv") or 0) + C.RESET
+            if f.get("rez"):
+                stats += C.GREY + "  DEF %-2d REZ %-3d" % (f.get("def") or 0, f["rez"]) + C.RESET
+            lines.append("  %s %s %s  %s" % (
+                C.GREY + "%2d" % f["n"] + C.RESET,
+                colour + pad(kind, 15) + C.RESET,
+                stats,
+                C.GREY + (f.get("label") or "") + C.RESET))
+        return lines
+
+    def screen_generate(self):
+        """Roll an architecture, show it, and only keep it if the GM says so."""
+        difficulty = "Standard"
+        net = None
+        while True:
+            if net is None:
+                net = generate_architecture(difficulty)
+
+            def head():
+                out = self.ui.banner("GENERATE AN ARCHITECTURE",
+                                     "nothing is added to the session until you accept")
+                out.append("")
+                out.extend(self.preview_lines(net))
+                out.append("")
+                return out
+
+            choice = self.ui.menu(head, [
+                (C.GREEN + "Use this one" + C.RESET, "accept"),
+                ("Roll another at %s" % difficulty, "reroll"),
+                ("Change difficulty (%s)" % difficulty, "difficulty"),
+                None,
+                ("Discard and go back", "cancel"),
+            ])
+            if choice in (None, "cancel"):
+                return None
+            if choice == "reroll":
+                net = None
+                continue
+            if choice == "difficulty":
+                pick = self.ui.menu(head, [
+                    ("%s  %s%d-%d floors, DV %d-%d%s" % (
+                        pad(d, 10), C.GREY,
+                        GEN_TIERS[d]["floors"][0], GEN_TIERS[d]["floors"][1],
+                        GEN_TIERS[d]["dv"][0], GEN_TIERS[d]["dv"][1], C.RESET), d)
+                    for d in DIFFICULTIES])
+                if pick:
+                    difficulty = pick
+                    net = None
+                continue
+            if choice == "accept":
+                name = self.ui.prompt(head, "Name it:", net["name"])
+                if name is None:
+                    continue
+                net["name"] = unique_net_name(self.session, name.strip() or net["name"])
+                self.session["nets"].append(net)
+                self.log("Generated a %s architecture: '%s' (%d floors)."
+                         % (difficulty, net["name"], len(net["floors"])))
+                self.touch()
+                self.ui.alert(head, ["'%s' added, hidden from the netrunner." % net["name"],
+                                     "Edit it or make it visible when you are ready."], C.GREEN)
+                return net
 
     def screen_net(self, net):
         keep = 0
@@ -2489,7 +2712,6 @@ class App:
         while True:
             turn = self.turn()
             per = self.actions_per_turn()
-            left = self.actions_left()
 
             def head():
                 t = self.turn()

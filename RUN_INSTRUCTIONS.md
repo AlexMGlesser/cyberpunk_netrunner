@@ -2,7 +2,7 @@
 
 A two-program setup for running NET architectures at the table:
 
-- **`admin/netmanager.py`** — the Game Master console. Build architectures, decide what the player can see, watch their run, resolve NET Actions, block them out. Architectures can be saved to a reusable library and reset between runs.
+- **`admin/netmanager.py`** — the Game Master console. Build or generate architectures, decide what the player can see, watch their run, resolve NET Actions, block them out. Architectures can be saved to a reusable library and reset between runs.
 - **`netrunner/netrunner.py`** — the player's terminal. Finds your session on the local network, jacks in, and updates live as you change things.
 
 Both are single files with no dependencies beyond Python itself.
@@ -71,7 +71,7 @@ A few screens add a single-key shortcut, always listed along the bottom of the s
 
 ## GM walkthrough
 
-**1. Build an architecture.** Session menu → **NET Architectures** → **Create a new NET**. Give it a name, then add floors from the top down. Each floor has:
+**1. Build an architecture.** Session menu → **NET Architectures** → **Create a new NET**, or **Generate an architecture** to roll one from a difficulty (see below). Give it a name, then add floors from the top down. Each floor has:
 
 - a **Type** — Password, File, Control Node, Black ICE (Hellhound, Killer, Asp, Raven, …), a Demon, or anything you type in
 - a **DV** the player rolls against — set this and the program resolves the check for you. They don't see it until they attempt the floor (or you tell them)
@@ -189,6 +189,24 @@ Resetting while they're inside is allowed — they're moved back to floor 1 and 
 
 ---
 
+## Generating an architecture
+
+**NET Architectures → Generate an architecture** rolls a whole thing from a difficulty. Pick **Basic**, **Standard**, **Uncommon** or **Advanced** and it builds one with a shape to it, rather than a random pile of floors:
+
+- The way in is always a **Password**.
+- Anything worth having — a File or a Control Node — always sits **directly beneath an obstacle**. Nothing valuable is ever left unguarded, and two valuables never sit next to each other.
+- The bottom floor is always the prize, with something standing over it.
+- **DVs never drop as you descend**, so the deeper they go the harder it gets.
+- **ICE gets tougher deeper in** too, its DEF and REZ climbing with depth.
+
+The tier scales all of it. Basic runs 3–5 floors at DV 4–8 with the weakest ICE and no Demons; Advanced runs 9–12 floors at DV 10–17, fields Liches and Dragons, and puts a Balron in about a quarter of its obstacle slots.
+
+Generated Files come named with a line of content, and Control Nodes come wired to something — door locks, cameras, a turret mount — so a fresh architecture is playable without you writing anything. Edit any of it afterwards; it's an ordinary architecture once accepted.
+
+**Nothing is added until you accept it.** The preview shows every floor with its DV and ICE stats, and you can roll again, change difficulty, rename it, or discard it. Accepting adds it hidden, like any other architecture, so you decide when it goes on the player's map.
+
+---
+
 ## The architecture library
 
 Build an architecture once and reuse it in any session.
@@ -275,6 +293,12 @@ netrunner.py  [--host ADDRESS] [--port 7717] [--ascii]
 | `--ascii` | Plain `-` and `+` instead of box-drawing characters, for terminals with bad font coverage. Auto-detected, but you can force it. |
 | `--no-beacon` | Stop announcing the session on the network. Players then need `--host` or manual entry. |
 | `--host` | Connect straight to an address, skipping the session list. |
+
+---
+
+## Tests
+
+`tests/test_generate.py` covers the generator — run it with `python3 tests/test_generate.py`. It checks the structural rules statistically across 300 architectures per difficulty, since the output is random.
 
 ---
 
